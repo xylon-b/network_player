@@ -79,7 +79,7 @@ fun BrowserScreen(
                                 "${server.share}\\$path",
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
-                                overflow = TextOverflow.StartEllipsis,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
