@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Rotate90DegreesCw
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Tune
@@ -61,6 +62,7 @@ class FloatingActions(
     val onScale: () -> Unit,
     val onSubtitle: () -> Unit,
     val onAudio: () -> Unit,
+    val onRotate: () -> Unit,
     val onLock: () -> Unit,
 )
 
@@ -149,6 +151,7 @@ private fun Panel(actions: FloatingActions, modifier: Modifier = Modifier) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             PanelButton(Icons.Default.Subtitles, "자막", actions.onSubtitle)
             PanelButton(Icons.Default.Audiotrack, "음성", actions.onAudio)
+            PanelButton(Icons.Default.Rotate90DegreesCw, "회전", actions.onRotate)
         }
     }
 }
