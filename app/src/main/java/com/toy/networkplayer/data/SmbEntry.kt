@@ -17,6 +17,11 @@ data class SmbEntry(
             else -> MediaKind.OTHER
         }
 
+    val isSubtitle: Boolean get() = !isDirectory && extension in SUBTITLE_EXT
+
+    /** 확장자를 뺀 이름. 같은 이름의 자막을 찾을 때 쓴다. */
+    val baseName: String get() = name.substringBeforeLast('.')
+
     private val extension: String get() = name.substringAfterLast('.', "").lowercase()
 
     companion object {
@@ -25,5 +30,6 @@ data class SmbEntry(
             "mpg", "mpeg", "3gp", "rmvb", "asf", "vob", "ogv",
         )
         val IMAGE_EXT = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif")
+        val SUBTITLE_EXT = setOf("smi", "srt", "ass", "ssa", "sub", "vtt")
     }
 }
