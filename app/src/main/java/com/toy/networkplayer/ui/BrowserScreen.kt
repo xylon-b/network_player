@@ -1,6 +1,5 @@
 package com.toy.networkplayer.ui
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,7 +34,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.toy.networkplayer.data.MediaKind
@@ -57,8 +55,8 @@ fun BrowserScreen(
     onBack: () -> Unit,
     onOpenFolder: (SmbEntry) -> Unit,
     onOpenImage: (images: List<SmbEntry>, index: Int) -> Unit,
+    onOpenVideo: (videos: List<SmbEntry>, index: Int) -> Unit,
 ) {
-    val context = LocalContext.current
     var state by remember(server, path) { mutableStateOf<LoadState>(LoadState.Loading) }
     var reload by remember { mutableIntStateOf(0) }
 
@@ -105,6 +103,7 @@ fun BrowserScreen(
                         Text("빈 폴더예요", Modifier.align(Alignment.Center))
                     }
                     val images = s.entries.filter { it.kind == MediaKind.IMAGE }
+                    val videos = s.entries.filter { it.kind == MediaKind.VIDEO }
                     LazyColumn(Modifier.fillMaxSize()) {
                         items(s.entries, key = { it.path }) { e ->
                             ListItem(
@@ -112,7 +111,7 @@ fun BrowserScreen(
                                     when (e.kind) {
                                         MediaKind.FOLDER -> onOpenFolder(e)
                                         MediaKind.IMAGE -> onOpenImage(images, images.indexOf(e))
-                                        MediaKind.VIDEO -> Toast.makeText(context, "동영상 재생은 다음 단계에서 붙일게요", Toast.LENGTH_SHORT).show()
+                                        MediaKind.VIDEO -> onOpenVideo(videos, videos.indexOf(e))
                                         MediaKind.OTHER -> Unit
                                     }
                                 },
