@@ -72,7 +72,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.SmbEntry
-import com.toy.networkplayer.data.SmbUrls
+import com.toy.networkplayer.data.LocalStreamServer
 import kotlinx.coroutines.delay
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
@@ -229,16 +229,16 @@ fun PlayerScreen(
         buffering = true
         error = null
         val video = videos[index]
-        val media = Media(libVlc, SmbUrls.forVlc(server, video.path))
+        // libVLC의 SMB 모듈 대신, 앱 안의 로컬 HTTP 서버를 거쳐 smbj로 읽는다.
+        val media = Media(libVlc, LocalStreamServer.url(server, video.path))
         media.setHWDecoderEnabled(true, false)
-        SmbUrls.vlcOptions(server).forEach { media.addOption(it) }
         player.setMedia(media)
         media.release()
         // 같은 이름의 자막 파일(영상.smi, 영상.ko.srt 등)을 붙인다.
         subtitles
             .filter { it.baseName.equals(video.baseName, ignoreCase = true) || it.baseName.startsWith(video.baseName + ".", ignoreCase = true) }
             .forEachIndexed { i, sub ->
-                player.addSlave(IMedia.Slave.Type.Subtitle, SmbUrls.forVlc(server, sub.path), i == 0)
+                player.addSlave(IMedia.Slave.Type.Subtitle, LocalStreamServer.url(server, sub.path), i == 0)
             }
         player.play()
         applySpeed()
