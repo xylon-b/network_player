@@ -1,6 +1,9 @@
 package com.toy.networkplayer.ui
 
 import android.app.Activity
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import android.content.Context
 import android.media.AudioManager
 import android.provider.Settings
@@ -120,6 +123,8 @@ fun PlayerScreen(
     var speedIndex by remember { mutableIntStateOf(SPEEDS.indexOf(1f)) }
     var holding by remember { mutableStateOf(false) }
     var scaleIndex by remember { mutableIntStateOf(0) }
+    var rotation by remember { mutableIntStateOf(0) }
+    var videoAspect by remember { mutableFloatStateOf(16f / 9f) }
     var brightness by remember { mutableFloatStateOf(-1f) }
     var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()) }
     var hud by remember { mutableStateOf<String?>(null) }
@@ -199,6 +204,7 @@ fun PlayerScreen(
         player.setEventListener { e ->
             when (e.type) {
                 MediaPlayer.Event.Playing -> { playing = true; buffering = false; error = null }
+                MediaPlayer.Event.Vout -> { readVideoAspect(player)?.let { videoAspect = it } }
                 MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> { playing = false }
                 MediaPlayer.Event.TimeChanged -> { if (!dragging && !gestureSeeking) time = e.timeChanged }
                 MediaPlayer.Event.LengthChanged -> { length = e.lengthChanged }
@@ -242,7 +248,6 @@ fun PlayerScreen(
             }
         player.play()
         applySpeed()
-        player.setVideoScale(SCALES[scaleIndex].first)
         touch()
     }
 
@@ -357,8 +362,14 @@ fun PlayerScreen(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx -> VLCVideoLayout(ctx).also { player.attachViews(it, null, true, false) } },
+            // 회전을 위해 TextureView를 쓰고, 화면비는 영상 상자 크기로 직접 맞춘다(엔진은 상자를 꽉 채움).
+            factory = { ctx ->
+                VLCVideoLayout(ctx).also {
+                    player.attachViews(it, null, true, true)
+                    player.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL)
+                }
+            },
+            modifier = Modifier.fillMaxSize().clipToBounds().videoBox(SCALES[scaleIndex], videoAspect, rotation),
         )
 
         GestureLayer(locked = locked, callbacks = gestures)
@@ -443,7 +454,7 @@ fun PlayerScreen(
             actions = FloatingActions(
                 playing = playing,
                 speedLabel = formatSpeed(SPEEDS[speedIndex]),
-                scaleLabel = SCALES[scaleIndex].second,
+                scaleLabel = SCALES[scaleIndex].label,
                 onPlayPause = { togglePlay(); touch() },
                 onBack10 = { skip(-SKIP_MS); touch() },
                 onForward10 = { skip(SKIP_MS); touch() },
@@ -455,8 +466,7 @@ fun PlayerScreen(
                 },
                 onScale = {
                     scaleIndex = (scaleIndex + 1) % SCALES.size
-                    player.setVideoScale(SCALES[scaleIndex].first)
-                    showHud(SCALES[scaleIndex].second)
+                    showHud(SCALES[scaleIndex].label)
                     touch()
                 },
                 onSubtitle = {
@@ -465,6 +475,11 @@ fun PlayerScreen(
                 },
                 onAudio = {
                     cycleTrack(player.audioTracks, player.audioTrack, { player.setAudioTrack(it) }, "음성")
+                    touch()
+                },
+                onRotate = {
+                    rotation = (rotation + 90) % 360
+                    showHud("영상 회전 ${rotation}°")
                     touch()
                 },
                 onLock = {
@@ -483,14 +498,60 @@ private const val HOLD_SPEED = 2f
 private const val SWIPE_RANGE_MS = 120_000L
 private const val LIVE_SEEK_INTERVAL_MS = 80L
 
+private enum class FitMode { FIT, COVER, STRETCH }
+
+/** 화면비 옵션. ratio가 null이면 영상 원래 비율을 쓴다. */
+private class AspectOption(val label: String, val mode: FitMode, val ratio: Float?)
+
 private val SCALES = listOf(
-    MediaPlayer.ScaleType.SURFACE_BEST_FIT to "맞춤",
-    MediaPlayer.ScaleType.SURFACE_FIT_SCREEN to "꽉 차게",
-    MediaPlayer.ScaleType.SURFACE_FILL to "늘이기",
-    MediaPlayer.ScaleType.SURFACE_16_9 to "16:9",
-    MediaPlayer.ScaleType.SURFACE_4_3 to "4:3",
-    MediaPlayer.ScaleType.SURFACE_ORIGINAL to "원본",
+    AspectOption("맞춤", FitMode.FIT, null),
+    AspectOption("꽉 차게", FitMode.COVER, null),
+    AspectOption("늘이기", FitMode.STRETCH, null),
+    AspectOption("16:9", FitMode.FIT, 16f / 9f),
+    AspectOption("9:16", FitMode.FIT, 9f / 16f),
+    AspectOption("4:3", FitMode.FIT, 4f / 3f),
+    AspectOption("1:1", FitMode.FIT, 1f),
 )
+
+/** 영상 트랙의 표시 비율. 휴대폰 세로 영상처럼 회전 정보가 있으면 가로세로를 바꾼다. */
+private fun readVideoAspect(player: MediaPlayer): Float? {
+    val t = player.currentVideoTrack ?: return null
+    if (t.width <= 0 || t.height <= 0) return null
+    val sar = if (t.sarNum > 0 && t.sarDen > 0) t.sarNum.toFloat() / t.sarDen else 1f
+    val aspect = t.width * sar / t.height
+    val sideways = t.orientation == IMedia.VideoTrack.Orientation.LeftBottom ||
+        t.orientation == IMedia.VideoTrack.Orientation.RightTop ||
+        t.orientation == IMedia.VideoTrack.Orientation.LeftTop ||
+        t.orientation == IMedia.VideoTrack.Orientation.RightBottom
+    return if (sideways) 1f / aspect else aspect
+}
+
+/**
+ * 영상 상자를 화면비 옵션과 회전(0/90/180/270)에 맞춰 배치한다.
+ * 90/270도일 때는 가로세로를 바꿔 잰 뒤 돌려서 화면 가운데 놓는다.
+ */
+private fun Modifier.videoBox(option: AspectOption, videoAspect: Float, rotation: Int) = layout { measurable, constraints ->
+    val w = constraints.maxWidth.toFloat()
+    val h = constraints.maxHeight.toFloat()
+    val sideways = rotation % 180 != 0
+    val aspect = option.ratio ?: videoAspect
+    // 돌린 뒤 화면에 보이는 비율
+    val shown = if (sideways) 1f / aspect else aspect
+    val (bw, bh) = when (option.mode) {
+        FitMode.STRETCH -> w to h
+        FitMode.FIT -> if (w / h > shown) h * shown to h else w to w / shown
+        FitMode.COVER -> if (w / h > shown) w to w / shown else h * shown to h
+    }
+    val cw = (if (sideways) bh else bw).roundToInt().coerceAtLeast(1)
+    val ch = (if (sideways) bw else bh).roundToInt().coerceAtLeast(1)
+    val placeable = measurable.measure(Constraints.fixed(cw, ch))
+    layout(constraints.maxWidth, constraints.maxHeight) {
+        placeable.placeWithLayer(
+            ((w - cw) / 2).roundToInt(),
+            ((h - ch) / 2).roundToInt(),
+        ) { rotationZ = rotation.toFloat() }
+    }
+}
 
 private fun formatSpeed(rate: Float) = if (rate % 1f == 0f) "${rate.toInt()}.0배속" else "${rate}배속"
 
