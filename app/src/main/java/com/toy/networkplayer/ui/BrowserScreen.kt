@@ -40,6 +40,7 @@ import com.toy.networkplayer.data.MediaKind
 import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.SmbEntry
 import com.toy.networkplayer.data.SmbRepository
+import com.toy.networkplayer.data.describe
 
 private sealed interface LoadState {
     data object Loading : LoadState
@@ -54,6 +55,7 @@ fun BrowserScreen(
     path: String,
     onBack: () -> Unit,
     onOpenFolder: (SmbEntry) -> Unit,
+    onOpenShare: (String) -> Unit,
     onOpenImage: (images: List<SmbEntry>, index: Int) -> Unit,
     onOpenVideo: (videos: List<SmbEntry>, index: Int, subtitles: List<SmbEntry>) -> Unit,
 ) {
@@ -62,8 +64,14 @@ fun BrowserScreen(
 
     LaunchedEffect(server, path, reload) {
         state = LoadState.Loading
-        state = runCatching { SmbRepository.list(server, path) }
-            .fold({ LoadState.Loaded(it) }, { LoadState.Failed(it.message ?: it.javaClass.simpleName) })
+        state = runCatching {
+            if (server.share.isBlank()) {
+                // 공유 이름 없이 저장한 PC: 공유 폴더 목록을 첫 화면으로 보여준다.
+                SmbRepository.listShares(server).map { SmbEntry(name = it, path = "", isDirectory = true, size = 0) }
+            } else {
+                SmbRepository.list(server, path)
+            }
+        }.fold({ LoadState.Loaded(it) }, { LoadState.Failed(it.describe()) })
     }
 
     Scaffold(
@@ -71,7 +79,7 @@ fun BrowserScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(path.substringAfterLast('\\').ifEmpty { server.displayName }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(path.substringAfterLast('\\').ifEmpty { server.share.ifBlank { server.displayName } }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (path.isNotEmpty()) {
                             Text(
                                 "${server.share}\\$path",
@@ -106,11 +114,11 @@ fun BrowserScreen(
                     val videos = s.entries.filter { it.kind == MediaKind.VIDEO }
                     val subtitles = s.entries.filter { it.isSubtitle }
                     LazyColumn(Modifier.fillMaxSize()) {
-                        items(s.entries, key = { it.path }) { e ->
+                        items(s.entries, key = { it.path + "|" + it.name }) { e ->
                             ListItem(
                                 modifier = Modifier.clickable {
                                     when (e.kind) {
-                                        MediaKind.FOLDER -> onOpenFolder(e)
+                                        MediaKind.FOLDER -> if (server.share.isBlank()) onOpenShare(e.name) else onOpenFolder(e)
                                         MediaKind.IMAGE -> onOpenImage(images, images.indexOf(e))
                                         MediaKind.VIDEO -> onOpenVideo(videos, videos.indexOf(e), subtitles)
                                         MediaKind.OTHER -> Unit

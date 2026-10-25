@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.ServerStore
 import com.toy.networkplayer.data.SmbRepository
+import com.toy.networkplayer.data.describe
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,7 +76,7 @@ fun ServerListScreen(store: ServerStore, onOpen: (ServerConfig) -> Unit) {
                         modifier = Modifier.clickable { onOpen(s) },
                         leadingContent = { Icon(Icons.Default.Computer, null) },
                         headlineContent = { Text(s.displayName) },
-                        supportingContent = { Text("smb://${s.host}/${s.share}") },
+                        supportingContent = { Text("smb://${s.host}/${s.share}".trimEnd('/')) },
                         trailingContent = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = { editing = s }) { Icon(Icons.Default.Edit, "수정") }
@@ -137,7 +138,7 @@ private fun ServerEditDialog(
         domain = domain.trim(),
     )
 
-    val valid = host.isNotBlank() && build().share.isNotBlank()
+    val valid = host.isNotBlank()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -152,7 +153,7 @@ private fun ServerEditDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(share, { share = it }, label = { Text("공유 이름 (예: Videos)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(share, { share = it }, label = { Text("공유 이름 (비워두면 목록에서 골라요)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(user, { user = it }, label = { Text("윈도우 사용자 이름") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
                     pass, { pass = it },
@@ -170,7 +171,7 @@ private fun ServerEditDialog(
                         status = "연결 확인 중..."
                         scope.launch {
                             status = runCatching { SmbRepository.test(build()) }
-                                .fold({ "연결 성공!" }, { "연결 실패: ${it.message ?: it.javaClass.simpleName}" })
+                                .fold({ "연결 성공!" }, { "연결 실패: ${it.describe()}" })
                             testing = false
                         }
                     },

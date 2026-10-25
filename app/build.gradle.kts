@@ -72,6 +72,10 @@ dependencies {
     // SMB2/3 클라이언트 (윈도우 공유폴더)
     implementation("com.hierynomus:smbj:0.13.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+    // PC의 공유 폴더 목록 조회 (SRVSVC)
+    implementation("com.rapid7.client:dcerpc:0.12.13") {
+        exclude(group = "com.hierynomus", module = "smbj")
+    }
 
     // 동영상 엔진. MKV/AC3/DTS 등 코덱이 넓고 smb:// 주소를 바로 연다.
     implementation("org.videolan.android:libvlc-all:3.5.1")
