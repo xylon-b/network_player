@@ -24,7 +24,12 @@ sealed interface Screen {
     data object Servers : Screen
     data class Browse(val server: ServerConfig, val path: String) : Screen
     data class Photos(val server: ServerConfig, val images: List<SmbEntry>, val start: Int) : Screen
-    data class Player(val server: ServerConfig, val videos: List<SmbEntry>, val start: Int) : Screen
+    data class Player(
+        val server: ServerConfig,
+        val videos: List<SmbEntry>,
+        val start: Int,
+        val subtitles: List<SmbEntry>,
+    ) : Screen
 }
 
 class MainActivity : ComponentActivity() {
@@ -52,7 +57,7 @@ class MainActivity : ComponentActivity() {
                         onBack = { pop() },
                         onOpenFolder = { push(Screen.Browse(top.server, it.path)) },
                         onOpenImage = { images, index -> push(Screen.Photos(top.server, images, index)) },
-                        onOpenVideo = { videos, index -> push(Screen.Player(top.server, videos, index)) },
+                        onOpenVideo = { videos, index, subs -> push(Screen.Player(top.server, videos, index, subs)) },
                     )
                     is Screen.Photos -> PhotoViewerScreen(
                         server = top.server,
@@ -64,6 +69,7 @@ class MainActivity : ComponentActivity() {
                         server = top.server,
                         videos = top.videos,
                         start = top.start,
+                        subtitles = top.subtitles,
                         onBack = { pop() },
                     )
                 }

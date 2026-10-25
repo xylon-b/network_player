@@ -55,7 +55,7 @@ fun BrowserScreen(
     onBack: () -> Unit,
     onOpenFolder: (SmbEntry) -> Unit,
     onOpenImage: (images: List<SmbEntry>, index: Int) -> Unit,
-    onOpenVideo: (videos: List<SmbEntry>, index: Int) -> Unit,
+    onOpenVideo: (videos: List<SmbEntry>, index: Int, subtitles: List<SmbEntry>) -> Unit,
 ) {
     var state by remember(server, path) { mutableStateOf<LoadState>(LoadState.Loading) }
     var reload by remember { mutableIntStateOf(0) }
@@ -104,6 +104,7 @@ fun BrowserScreen(
                     }
                     val images = s.entries.filter { it.kind == MediaKind.IMAGE }
                     val videos = s.entries.filter { it.kind == MediaKind.VIDEO }
+                    val subtitles = s.entries.filter { it.isSubtitle }
                     LazyColumn(Modifier.fillMaxSize()) {
                         items(s.entries, key = { it.path }) { e ->
                             ListItem(
@@ -111,7 +112,7 @@ fun BrowserScreen(
                                     when (e.kind) {
                                         MediaKind.FOLDER -> onOpenFolder(e)
                                         MediaKind.IMAGE -> onOpenImage(images, images.indexOf(e))
-                                        MediaKind.VIDEO -> onOpenVideo(videos, videos.indexOf(e))
+                                        MediaKind.VIDEO -> onOpenVideo(videos, videos.indexOf(e), subtitles)
                                         MediaKind.OTHER -> Unit
                                     }
                                 },
