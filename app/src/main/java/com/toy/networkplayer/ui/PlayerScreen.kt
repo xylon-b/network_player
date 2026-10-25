@@ -77,6 +77,7 @@ import kotlinx.coroutines.delay
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.util.VLCVideoLayout
 
 private const val HIDE_DELAY_MS = 3500L
@@ -237,7 +238,7 @@ fun PlayerScreen(
         subtitles
             .filter { it.baseName.equals(video.baseName, ignoreCase = true) || it.baseName.startsWith(video.baseName + ".", ignoreCase = true) }
             .forEachIndexed { i, sub ->
-                player.addSlave(Media.Slave.Type.Subtitle, SmbUrls.forVlc(server, sub.path), i == 0)
+                player.addSlave(IMedia.Slave.Type.Subtitle, SmbUrls.forVlc(server, sub.path), i == 0)
             }
         player.play()
         applySpeed()
