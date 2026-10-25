@@ -14,7 +14,7 @@ data class ServerConfig(
     val domain: String = "",
     val port: Int = 445,
 ) {
-    val displayName: String get() = name.ifBlank { "$host/$share" }
+    val displayName: String get() = name.ifBlank { if (share.isBlank()) host else "$host/$share" }
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)

@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
                         path = top.path,
                         onBack = { pop() },
                         onOpenFolder = { push(Screen.Browse(top.server, it.path)) },
+                        onOpenShare = { push(Screen.Browse(top.server.copy(share = it), "")) },
                         onOpenImage = { images, index -> push(Screen.Photos(top.server, images, index)) },
                         onOpenVideo = { videos, index, subs -> push(Screen.Player(top.server, videos, index, subs)) },
                     )

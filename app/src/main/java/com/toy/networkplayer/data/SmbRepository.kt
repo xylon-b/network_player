@@ -13,6 +13,8 @@ import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
 import com.hierynomus.smbj.share.DiskShare
+import com.rapid7.client.dcerpc.mssrvs.ServerService
+import com.rapid7.client.dcerpc.transport.SMBTransportFactories
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.EnumSet
@@ -32,14 +34,19 @@ object SmbRepository {
             .build()
     )
 
-    private class Live(val server: ServerConfig, val connection: Connection, val session: Session, val share: DiskShare)
+    private class Live(val key: ServerConfig, val connection: Connection, val session: Session) {
+        val shares = mutableMapOf<String, DiskShare>()
+    }
 
     private var live: Live? = null
 
+    /** 공유 이름과 상관없이 같은 PC/계정이면 연결을 재사용한다. */
+    private fun sessionKey(server: ServerConfig) = server.copy(id = "", name = "", share = "")
+
     @Synchronized
-    private fun share(server: ServerConfig): DiskShare {
+    private fun session(server: ServerConfig): Session {
         live?.let {
-            if (it.server == server && it.connection.isConnected && it.share.isConnected) return it.share
+            if (it.key == sessionKey(server) && it.connection.isConnected) return it.session
         }
         disconnect()
         val connection = client.connect(server.host, server.port)
@@ -49,8 +56,17 @@ object SmbRepository {
             AuthenticationContext(server.username, server.password.toCharArray(), server.domain.ifBlank { null })
         }
         val session = connection.authenticate(auth)
+        live = Live(sessionKey(server), connection, session)
+        return session
+    }
+
+    @Synchronized
+    private fun share(server: ServerConfig): DiskShare {
+        val session = session(server)
+        val shares = live!!.shares
+        shares[server.share]?.let { if (it.isConnected) return it }
         val share = session.connectShare(server.share) as DiskShare
-        live = Live(server, connection, session, share)
+        shares[server.share] = share
         return share
     }
 
@@ -62,8 +78,22 @@ object SmbRepository {
 
     /** 연결 확인용. 실패하면 예외를 던진다. */
     suspend fun test(server: ServerConfig) = withContext(Dispatchers.IO) {
-        share(server).list("")
+        if (server.share.isBlank()) listSharesBlocking(server) else share(server).list("")
         Unit
+    }
+
+    /** PC가 공유 중인 폴더 이름들. C$ 같은 관리용 숨김 공유는 뺀다. */
+    suspend fun listShares(server: ServerConfig): List<String> = withContext(Dispatchers.IO) {
+        listSharesBlocking(server)
+    }
+
+    @Synchronized
+    private fun listSharesBlocking(server: ServerConfig): List<String> {
+        val transport = SMBTransportFactories.SRVSVC.getTransport(session(server))
+        return ServerService(transport).shares0
+            .map { it.netName }
+            .filter { !it.endsWith("$") }
+            .sortedWith(NaturalOrder)
     }
 
     suspend fun list(server: ServerConfig, path: String): List<SmbEntry> = withContext(Dispatchers.IO) {
@@ -134,4 +164,23 @@ object NaturalOrder : Comparator<String> {
         }
         return ca.size - cb.size
     }
+}
+
+/** 사람이 읽을 오류 문구. 메시지가 비어 있으면 원인 예외까지 따라가 본다. */
+fun Throwable.describe(): String {
+    var t: Throwable? = this
+    while (t != null) {
+        val msg = t.message
+        if (!msg.isNullOrBlank()) return explain(msg)
+        t = t.cause
+    }
+    return javaClass.simpleName
+}
+
+private fun explain(msg: String): String = when {
+    "STATUS_LOGON_FAILURE" in msg -> "사용자 이름이나 비밀번호가 맞지 않아요"
+    "STATUS_BAD_NETWORK_NAME" in msg -> "그 공유 이름을 찾을 수 없어요. 공유 이름을 비워두고 목록에서 골라보세요"
+    "STATUS_ACCESS_DENIED" in msg -> "접근 권한이 없어요. 윈도우 공유 설정에서 이 계정을 허용해주세요"
+    "timed out" in msg.lowercase() || "timeout" in msg.lowercase() -> "PC에 연결할 수 없어요. 주소와 같은 와이파이인지 확인해주세요 ($msg)"
+    else -> msg
 }
