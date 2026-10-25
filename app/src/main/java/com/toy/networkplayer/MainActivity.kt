@@ -16,6 +16,7 @@ import com.toy.networkplayer.data.ServerStore
 import com.toy.networkplayer.data.SmbEntry
 import com.toy.networkplayer.ui.BrowserScreen
 import com.toy.networkplayer.ui.PhotoViewerScreen
+import com.toy.networkplayer.ui.PlayerScreen
 import com.toy.networkplayer.ui.ServerListScreen
 
 /** 화면 스택. 맨 위가 지금 보이는 화면. */
@@ -23,6 +24,7 @@ sealed interface Screen {
     data object Servers : Screen
     data class Browse(val server: ServerConfig, val path: String) : Screen
     data class Photos(val server: ServerConfig, val images: List<SmbEntry>, val start: Int) : Screen
+    data class Player(val server: ServerConfig, val videos: List<SmbEntry>, val start: Int) : Screen
 }
 
 class MainActivity : ComponentActivity() {
@@ -50,10 +52,17 @@ class MainActivity : ComponentActivity() {
                         onBack = { pop() },
                         onOpenFolder = { push(Screen.Browse(top.server, it.path)) },
                         onOpenImage = { images, index -> push(Screen.Photos(top.server, images, index)) },
+                        onOpenVideo = { videos, index -> push(Screen.Player(top.server, videos, index)) },
                     )
                     is Screen.Photos -> PhotoViewerScreen(
                         server = top.server,
                         images = top.images,
+                        start = top.start,
+                        onBack = { pop() },
+                    )
+                    is Screen.Player -> PlayerScreen(
+                        server = top.server,
+                        videos = top.videos,
                         start = top.start,
                         onBack = { pop() },
                     )

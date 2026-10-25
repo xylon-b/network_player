@@ -66,9 +66,13 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // SMB2/3 클라이언트 (윈도우 공유폴더)
     implementation("com.hierynomus:smbj:0.13.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+
+    // 동영상 엔진. MKV/AC3/DTS 등 코덱이 넓고 smb:// 주소를 바로 연다.
+    implementation("org.videolan.android:libvlc-all:3.5.1")
 }
