@@ -115,6 +115,17 @@ object SmbRepository {
             .toList()
     }
 
+    /** 읽기 전용으로 파일을 연다. 호출한 쪽에서 close 해야 한다. 블로킹 함수. */
+    fun openRead(server: ServerConfig, path: String): com.hierynomus.smbj.share.File =
+        share(server).openFile(
+            path,
+            EnumSet.of(AccessMask.GENERIC_READ),
+            null,
+            SMB2ShareAccess.ALL,
+            SMB2CreateDisposition.FILE_OPEN,
+            null,
+        )
+
     suspend fun readBytes(server: ServerConfig, path: String): ByteArray = withContext(Dispatchers.IO) {
         share(server).openFile(
             path,
