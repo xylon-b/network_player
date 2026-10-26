@@ -12,6 +12,7 @@ import com.toy.networkplayer.data.ShuffleBias
 import com.toy.networkplayer.data.ShuffleOptions
 import com.toy.networkplayer.data.SmartShuffle
 import com.toy.networkplayer.data.WatchHistory
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import android.content.Context
 import androidx.compose.foundation.Image
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -137,10 +139,18 @@ fun BrowserScreen(
         val videos = all.filter { it.kind == MediaKind.VIDEO }
         scope.launch {
             if (SmartShuffle.needsDuration(options)) {
-                val unknown = videos.filter { WatchHistory.get(server, it).durationMs <= 0 }
-                unknown.forEachIndexed { i, v ->
-                    shuffleProgress = "영상 길이 확인 중 ${i + 1}/${unknown.size}"
-                    Thumbnails.probeDuration(server, v)
+                // 이미 확인한 영상은 건너뛰고, 처음 보는 영상만 여러 개 동시에 읽는다.
+                val unknown = videos.filter { !WatchHistory.hasDuration(it) }
+                var done = 0
+                if (unknown.isNotEmpty()) shuffleProgress = "영상 길이 확인 중 0/${unknown.size}"
+                coroutineScope {
+                    unknown.forEach { v ->
+                        launch {
+                            Thumbnails.probeDuration(server, v)
+                            done++
+                            shuffleProgress = "영상 길이 확인 중 $done/${unknown.size}"
+                        }
+                    }
                 }
             }
             shuffleProgress = null
@@ -205,6 +215,16 @@ fun BrowserScreen(
                                     onClick = { setColumns(c) },
                                 )
                             }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("   썸네일 저장 비우기 (${Thumbnails.diskUsage() / (1024 * 1024)}MB)") },
+                                onClick = {
+                                    Thumbnails.clearDisk()
+                                    menuOpen = false
+                                    reload++
+                                    Toast.makeText(context, "썸네일을 비웠어요. 다시 만들어요", Toast.LENGTH_SHORT).show()
+                                },
+                            )
                         }
                     }
                 },
