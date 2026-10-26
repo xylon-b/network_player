@@ -56,6 +56,7 @@ object Thumbnails {
             try {
                 retriever.setDataSource(source)
                 val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                WatchHistory.setDuration(server, entry.path, durationMs)
                 // 첫 장면은 검은 화면인 경우가 많아서 조금 뒤 장면을 쓴다.
                 val atUs = (durationMs * 100L).coerceAtMost(30_000_000L)
                 val frame = retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return@use null
@@ -63,6 +64,32 @@ object Thumbnails {
             } finally {
                 runCatching { retriever.release() }
             }
+        }
+    }
+
+    /** 영상 길이만 빠르게 읽는다(랜덤 정렬의 길이 조건용). 결과는 시청 기록에 남긴다. */
+    suspend fun probeDuration(server: ServerConfig, entry: SmbEntry): Long = gate.withPermit {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                SmbRepository.openRead(server, entry.path).use { file ->
+                    val size = file.fileInformation.standardInformation.endOfFile
+                    val retriever = MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(object : MediaDataSource() {
+                            override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
+                                if (position >= size) return -1
+                                return file.read(buffer, position, offset, minOf(length.toLong(), size - position).toInt())
+                            }
+
+                            override fun getSize(): Long = size
+                            override fun close() = Unit
+                        })
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                    } finally {
+                        runCatching { retriever.release() }
+                    }
+                }
+            }.getOrDefault(0L).also { WatchHistory.setDuration(server, entry.path, it) }
         }
     }
 

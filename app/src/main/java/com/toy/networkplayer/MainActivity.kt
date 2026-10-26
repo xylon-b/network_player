@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.ServerStore
 import com.toy.networkplayer.data.SmbEntry
+import com.toy.networkplayer.data.WatchHistory
 import com.toy.networkplayer.ui.BrowserScreen
 import com.toy.networkplayer.ui.PhotoViewerScreen
 import com.toy.networkplayer.ui.PlayerScreen
@@ -37,6 +38,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val store = ServerStore(applicationContext)
+        WatchHistory.init(applicationContext)
 
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
