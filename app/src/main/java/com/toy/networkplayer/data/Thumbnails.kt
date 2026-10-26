@@ -1,6 +1,8 @@
 package com.toy.networkplayer.data
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
 import android.util.LruCache
@@ -8,8 +10,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 
-/** 바둑판 보기용 썸네일. 메모리에만 캐시하고, 동시에 너무 많이 읽지 않도록 제한한다. */
+/**
+ * 바둑판 보기용 썸네일.
+ * 한 번 만든 썸네일은 앱 저장공간(files/thumbs)에 JPEG로 남겨서 앱을 다시 켜도 다시 만들지 않는다.
+ * 파일 이름이 같으면 같은 영상/사진으로 보고 어느 폴더에 있든 같은 썸네일을 쓴다.
+ */
 object Thumbnails {
     private const val SIZE = 384
     private val cache = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
@@ -17,15 +26,38 @@ object Thumbnails {
     }
     private val failed = mutableSetOf<String>()
     private val gate = Semaphore(3)
+    private var dir: File? = null
 
-    private fun key(server: ServerConfig, entry: SmbEntry) = "${server.host}|${server.share}|${entry.path}"
+    fun init(context: Context) {
+        if (dir != null) return
+        dir = File(context.filesDir, "thumbs").apply { mkdirs() }
+    }
 
-    fun cached(server: ServerConfig, entry: SmbEntry): Bitmap? = cache.get(key(server, entry))
+    private fun key(entry: SmbEntry) = entry.name.lowercase()
+
+    private fun diskFile(k: String): File? {
+        val d = dir ?: return null
+        val hash = MessageDigest.getInstance("SHA-1").digest(k.toByteArray()).joinToString("") { "%02x".format(it) }
+        return File(d, "$hash.jpg")
+    }
+
+    fun cached(server: ServerConfig, entry: SmbEntry): Bitmap? = cache.get(key(entry))
 
     suspend fun load(server: ServerConfig, entry: SmbEntry): Bitmap? {
-        val k = key(server, entry)
+        val k = key(entry)
         cache.get(k)?.let { return it }
         synchronized(failed) { if (k in failed) return null }
+
+        // 저장해 둔 썸네일이 있으면 SMB를 건드리지 않고 바로 쓴다.
+        val file = diskFile(k)
+        if (file != null && file.exists()) {
+            val saved = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(file.path) }
+            if (saved != null) {
+                cache.put(k, saved)
+                return saved
+            }
+        }
+
         val bmp = gate.withPermit {
             runCatching {
                 when (entry.kind) {
@@ -35,8 +67,30 @@ object Thumbnails {
                 }
             }.getOrNull()
         }
-        if (bmp != null) cache.put(k, bmp) else synchronized(failed) { failed += k }
+        if (bmp != null) {
+            cache.put(k, bmp)
+            if (file != null) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val tmp = File(file.path + ".tmp")
+                        FileOutputStream(tmp).use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                        tmp.renameTo(file)
+                    }
+                }
+            }
+        } else {
+            synchronized(failed) { failed += k }
+        }
         return bmp
+    }
+
+    /** 저장된 썸네일 전체 크기(바이트). */
+    fun diskUsage(): Long = dir?.listFiles()?.sumOf { it.length() } ?: 0L
+
+    fun clearDisk() {
+        cache.evictAll()
+        synchronized(failed) { failed.clear() }
+        dir?.listFiles()?.forEach { it.delete() }
     }
 
     private suspend fun videoFrame(server: ServerConfig, entry: SmbEntry): Bitmap? = withContext(Dispatchers.IO) {
