@@ -75,6 +75,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.SmbEntry
+import com.toy.networkplayer.data.WatchHistory
 import com.toy.networkplayer.data.LocalStreamServer
 import kotlinx.coroutines.delay
 import org.videolan.libvlc.LibVLC
@@ -124,6 +125,9 @@ fun PlayerScreen(
     var holding by remember { mutableStateOf(false) }
     var scaleIndex by remember { mutableIntStateOf(0) }
     var rotation by remember { mutableIntStateOf(0) }
+    var countedIndex by remember { mutableIntStateOf(-1) }
+    // 재생 위치는 자주 바뀌니 화면 갱신을 일으키지 않는 보관함에 둔다.
+    val lastSaved = remember { SavedPosition() }
     var videoAspect by remember { mutableFloatStateOf(16f / 9f) }
     var brightness by remember { mutableFloatStateOf(-1f) }
     var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()) }
@@ -203,11 +207,27 @@ fun PlayerScreen(
     DisposableEffect(player) {
         player.setEventListener { e ->
             when (e.type) {
-                MediaPlayer.Event.Playing -> { playing = true; buffering = false; error = null }
+                MediaPlayer.Event.Playing -> {
+                    playing = true
+                    buffering = false
+                    error = null
+                    // 영상마다 처음 재생될 때 한 번만 시청 횟수를 올린다.
+                    if (countedIndex != index) {
+                        countedIndex = index
+                        WatchHistory.markPlayed(server, videos[index].path)
+                    }
+                }
                 MediaPlayer.Event.Vout -> { readVideoAspect(player)?.let { videoAspect = it } }
                 MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> { playing = false }
-                MediaPlayer.Event.TimeChanged -> { if (!dragging && !gestureSeeking) time = e.timeChanged }
-                MediaPlayer.Event.LengthChanged -> { length = e.lengthChanged }
+                MediaPlayer.Event.TimeChanged -> {
+                    if (!dragging && !gestureSeeking) time = e.timeChanged
+                    lastSaved.path = videos[index].path
+                    lastSaved.positionMs = e.timeChanged
+                }
+                MediaPlayer.Event.LengthChanged -> {
+                    length = e.lengthChanged
+                    WatchHistory.setDuration(server, videos[index].path, e.lengthChanged)
+                }
                 MediaPlayer.Event.Buffering -> { buffering = e.buffering < 100f }
                 MediaPlayer.Event.EndReached -> {
                     if (index < videos.lastIndex) {
@@ -221,6 +241,7 @@ fun PlayerScreen(
             }
         }
         onDispose {
+            lastSaved.path?.let { WatchHistory.setPosition(server, it, lastSaved.positionMs) }
             player.setEventListener(null)
             player.stop()
             player.detachViews()
@@ -230,6 +251,8 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(index) {
+        // 이전 영상의 위치를 남겨 둔다(바둑판의 진행 막대용).
+        lastSaved.path?.let { WatchHistory.setPosition(server, it, lastSaved.positionMs) }
         time = 0L
         length = 0L
         buffering = true
@@ -497,6 +520,11 @@ private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 private const val HOLD_SPEED = 2f
 private const val SWIPE_RANGE_MS = 120_000L
 private const val LIVE_SEEK_INTERVAL_MS = 80L
+
+private class SavedPosition {
+    var path: String? = null
+    var positionMs = 0L
+}
 
 private enum class FitMode { FIT, COVER, STRETCH }
 
