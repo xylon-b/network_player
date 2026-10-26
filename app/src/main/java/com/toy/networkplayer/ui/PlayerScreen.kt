@@ -1,5 +1,8 @@
 package com.toy.networkplayer.ui
 
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Favorite
+import com.toy.networkplayer.data.Favorites
 import android.app.Activity
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.layout
@@ -111,7 +114,8 @@ fun PlayerScreen(
     var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
-    var landscape by remember { mutableStateOf(true) }
+    // 0: 폰 방향 따라가기, 1: 가로 고정, 2: 세로 고정
+    var orientationMode by remember { mutableIntStateOf(0) }
 
     // 제스처/옵션 상태
     var locked by remember { mutableStateOf(false) }
@@ -145,6 +149,20 @@ fun PlayerScreen(
     fun showHud(text: String) {
         hud = text
         hudAt = System.currentTimeMillis()
+    }
+
+    val liked = Favorites.isFavorite(videos[index])
+
+    fun cycleOrientation() {
+        orientationMode = (orientationMode + 1) % ORIENTATIONS.size
+        showHud(ORIENTATIONS[orientationMode])
+        touch()
+    }
+
+    fun like() {
+        val on = Favorites.toggle(server, videos[index])
+        showHud(if (on) "♥ 좋아요" else "좋아요 취소")
+        touch()
     }
 
     fun clampTime(ms: Long) = if (length > 0) ms.coerceIn(0L, length) else ms.coerceAtLeast(0L)
@@ -196,11 +214,12 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(landscape) {
-        activity.requestedOrientation = if (landscape) {
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+    LaunchedEffect(orientationMode) {
+        activity.requestedOrientation = when (orientationMode) {
+            1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            2 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            // 들고 있는 방향 그대로. 폰의 자동 회전이 꺼져 있어도 센서를 따른다.
+            else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         }
     }
 
@@ -440,7 +459,9 @@ fun PlayerScreen(
                 TopBar(
                     title = videos[index].name,
                     onBack = onBack,
-                    onRotate = { landscape = !landscape; touch() },
+                    liked = liked,
+                    onLike = { like() },
+                    onRotate = { cycleOrientation() },
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
                 BottomBar(
@@ -511,11 +532,16 @@ fun PlayerScreen(
                     controlsVisible = false
                     showHud("화면 잠금")
                 },
+                liked = liked,
+                onLike = { like() },
+                orientationLabel = ORIENTATIONS[orientationMode],
+                onOrientation = { cycleOrientation() },
             ),
         )
     }
 }
 
+private val ORIENTATIONS = listOf("자동 회전", "가로 고정", "세로 고정")
 private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 private const val HOLD_SPEED = 2f
 private const val SWIPE_RANGE_MS = 120_000L
@@ -584,7 +610,14 @@ private fun Modifier.videoBox(option: AspectOption, videoAspect: Float, rotation
 private fun formatSpeed(rate: Float) = if (rate % 1f == 0f) "${rate.toInt()}.0배속" else "${rate}배속"
 
 @Composable
-private fun TopBar(title: String, onBack: () -> Unit, onRotate: () -> Unit, modifier: Modifier = Modifier) {
+private fun TopBar(
+    title: String,
+    onBack: () -> Unit,
+    liked: Boolean,
+    onLike: () -> Unit,
+    onRotate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier
             .fillMaxWidth()
@@ -595,7 +628,14 @@ private fun TopBar(title: String, onBack: () -> Unit, onRotate: () -> Unit, modi
     ) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "뒤로", tint = Color.White) }
         Text(title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        IconButton(onClick = onRotate) { Icon(Icons.Default.ScreenRotation, "화면 회전", tint = Color.White) }
+        IconButton(onClick = onLike) {
+            Icon(
+                if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                "좋아요",
+                tint = if (liked) HEART else Color.White,
+            )
+        }
+        IconButton(onClick = onRotate) { Icon(Icons.Default.ScreenRotation, "화면 방향", tint = Color.White) }
     }
 }
 

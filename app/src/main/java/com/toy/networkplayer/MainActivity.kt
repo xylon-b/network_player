@@ -1,5 +1,7 @@
 package com.toy.networkplayer
 
+import com.toy.networkplayer.ui.FavoritesScreen
+import com.toy.networkplayer.data.Favorites
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -24,6 +26,7 @@ import com.toy.networkplayer.ui.ServerListScreen
 /** 화면 스택. 맨 위가 지금 보이는 화면. */
 sealed interface Screen {
     data object Servers : Screen
+    data object Favorites : Screen
     data class Browse(val server: ServerConfig, val path: String) : Screen
     data class Photos(val server: ServerConfig, val images: List<SmbEntry>, val start: Int) : Screen
     data class Player(
@@ -41,6 +44,7 @@ class MainActivity : ComponentActivity() {
         val store = ServerStore(applicationContext)
         WatchHistory.init(applicationContext)
         Thumbnails.init(applicationContext)
+        Favorites.init(applicationContext)
 
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
@@ -54,6 +58,13 @@ class MainActivity : ComponentActivity() {
                     Screen.Servers -> ServerListScreen(
                         store = store,
                         onOpen = { push(Screen.Browse(it, "")) },
+                        onOpenFavorites = { push(Screen.Favorites) },
+                    )
+                    Screen.Favorites -> FavoritesScreen(
+                        servers = store.load(),
+                        onBack = { pop() },
+                        onOpenImage = { server, images, index -> push(Screen.Photos(server, images, index)) },
+                        onOpenVideo = { server, videos, index -> push(Screen.Player(server, videos, index, emptyList())) },
                     )
                     is Screen.Browse -> BrowserScreen(
                         server = top.server,
@@ -63,6 +74,7 @@ class MainActivity : ComponentActivity() {
                         onOpenShare = { push(Screen.Browse(top.server.copy(share = it), "")) },
                         onOpenImage = { images, index -> push(Screen.Photos(top.server, images, index)) },
                         onOpenVideo = { videos, index, subs -> push(Screen.Player(top.server, videos, index, subs)) },
+                        onOpenFavorites = { push(Screen.Favorites) },
                     )
                     is Screen.Photos -> PhotoViewerScreen(
                         server = top.server,

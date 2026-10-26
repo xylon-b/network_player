@@ -1,5 +1,11 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.toy.networkplayer.ui
 
+import android.view.HapticFeedbackConstants
+import com.toy.networkplayer.data.Favorites
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.Favorite
 import android.widget.Toast
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -39,7 +45,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import com.toy.networkplayer.data.Thumbnails
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -105,6 +110,7 @@ fun BrowserScreen(
     onOpenShare: (String) -> Unit,
     onOpenImage: (images: List<SmbEntry>, index: Int) -> Unit,
     onOpenVideo: (videos: List<SmbEntry>, index: Int, subtitles: List<SmbEntry>) -> Unit,
+    onOpenFavorites: () -> Unit,
 ) {
     var state by remember(server, path) { mutableStateOf<LoadState>(LoadState.Loading) }
     var reload by remember { mutableIntStateOf(0) }
@@ -203,6 +209,7 @@ fun BrowserScreen(
                             Icon(Icons.Default.Shuffle, "랜덤 정렬", tint = if (shuffled != null) MaterialTheme.colorScheme.primary else LocalContentColor.current)
                         }
                     }
+                    IconButton(onClick = onOpenFavorites) { Icon(Icons.Default.Favorite, "즐겨찾기") }
                     IconButton(onClick = { reload++ }) { Icon(Icons.Default.Refresh, "새로고침") }
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
@@ -269,6 +276,7 @@ fun BrowserScreen(
                             MediaKind.OTHER -> Unit
                         }
                     }
+                    val like: (SmbEntry) -> Unit = { e -> toggleFavorite(context, server, e) }
                     Column(Modifier.fillMaxSize()) {
                         shuffleProgress?.let { msg ->
                             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -288,8 +296,9 @@ fun BrowserScreen(
                             LazyColumn(Modifier.fillMaxSize()) {
                                 items(shown, key = { it.path + "|" + it.name }) { e ->
                                     ListItem(
-                                        modifier = Modifier.clickable { open(e) },
+                                        modifier = Modifier.combinedClickable(onLongClick = { like(e) }) { open(e) },
                                         leadingContent = { Icon(iconOf(e), null) },
+                                        trailingContent = if (Favorites.isFavorite(e)) { { Icon(Icons.Default.Favorite, "좋아요", tint = HEART) } } else null,
                                         headlineContent = { Text(e.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                                         supportingContent = if (e.isDirectory) null else { { Text(formatSize(e.size)) } },
                                     )
@@ -304,7 +313,7 @@ fun BrowserScreen(
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                             ) {
                                 items(shown, key = { it.path + "|" + it.name }) { e ->
-                                    Tile(server, e, compact = columns >= 4, onClick = { open(e) })
+                                    Tile(server, e, compact = columns >= 4, onClick = { open(e) }, onLongClick = { like(e) })
                                 }
                             }
                         }
@@ -366,12 +375,12 @@ private fun BoxScope.WatchedBar(server: ServerConfig, e: SmbEntry) {
 
 /** 1:1 정사각형 칸. 사진과 영상은 썸네일, 나머지는 아이콘. */
 @Composable
-private fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Unit) {
+fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val hasThumb = e.kind == MediaKind.IMAGE || e.kind == MediaKind.VIDEO
     val thumb by produceState(Thumbnails.cached(server, e), server, e.path) {
         if (value == null && hasThumb) value = Thumbnails.load(server, e)
     }
-    Column(Modifier.clickable(onClick = onClick)) {
+    Column(Modifier.combinedClickable(onLongClick = onLongClick, onClick = onClick)) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -400,6 +409,17 @@ private fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: (
                     modifier = Modifier.fillMaxSize(0.45f),
                 )
             }
+            if (Favorites.isFavorite(e)) {
+                Icon(
+                    Icons.Default.Favorite,
+                    "좋아요",
+                    tint = HEART,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                        .size(if (compact) 16.dp else 22.dp),
+                )
+            }
         }
         Text(
             e.name,
@@ -409,6 +429,16 @@ private fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: (
             modifier = Modifier.padding(top = 4.dp, start = 2.dp, end = 2.dp),
         )
     }
+}
+
+val HEART = Color(0xFFFF4D6D)
+
+/** 사진·영상만 좋아요를 누를 수 있다. 눌렀다는 걸 진동과 짧은 안내로 알려준다. */
+fun toggleFavorite(context: Context, server: ServerConfig, e: SmbEntry) {
+    if (e.kind != MediaKind.VIDEO && e.kind != MediaKind.IMAGE) return
+    val on = Favorites.toggle(server, e)
+    (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    Toast.makeText(context, if (on) "♥ 좋아요" else "좋아요 취소", Toast.LENGTH_SHORT).show()
 }
 
 fun formatSize(bytes: Long): String {

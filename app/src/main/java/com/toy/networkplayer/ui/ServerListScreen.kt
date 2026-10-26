@@ -1,5 +1,6 @@
 package com.toy.networkplayer.ui
 
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,7 +50,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServerListScreen(store: ServerStore, onOpen: (ServerConfig) -> Unit) {
+fun ServerListScreen(store: ServerStore, onOpen: (ServerConfig) -> Unit, onOpenFavorites: () -> Unit) {
     var servers by remember { mutableStateOf(store.load()) }
     var editing by remember { mutableStateOf<ServerConfig?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -60,7 +61,12 @@ fun ServerListScreen(store: ServerStore, onOpen: (ServerConfig) -> Unit) {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("공유폴더") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("공유폴더") },
+                actions = { IconButton(onClick = onOpenFavorites) { Icon(Icons.Default.Favorite, "즐겨찾기") } },
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = { adding = true }) { Icon(Icons.Default.Add, "서버 추가") }
         },
