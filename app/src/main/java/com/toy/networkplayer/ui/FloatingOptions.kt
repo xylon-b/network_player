@@ -1,5 +1,8 @@
 package com.toy.networkplayer.ui
 
+import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Favorite
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -64,6 +67,10 @@ class FloatingActions(
     val onAudio: () -> Unit,
     val onRotate: () -> Unit,
     val onLock: () -> Unit,
+    val liked: Boolean,
+    val onLike: () -> Unit,
+    val orientationLabel: String,
+    val onOrientation: () -> Unit,
 )
 
 /**
@@ -153,11 +160,20 @@ private fun Panel(actions: FloatingActions, modifier: Modifier = Modifier) {
             PanelButton(Icons.Default.Audiotrack, "음성", actions.onAudio)
             PanelButton(Icons.Default.Rotate90DegreesCw, "회전", actions.onRotate)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            PanelButton(
+                if (actions.liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                "좋아요",
+                actions.onLike,
+                tint = if (actions.liked) HEART else Color.White,
+            )
+            PanelButton(Icons.Default.ScreenRotation, actions.orientationLabel, actions.onOrientation)
+        }
     }
 }
 
 @Composable
-private fun PanelButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun PanelButton(icon: ImageVector, label: String, onClick: () -> Unit, tint: Color = Color.White) {
     Column(
         Modifier
             .width(64.dp)
@@ -166,7 +182,7 @@ private fun PanelButton(icon: ImageVector, label: String, onClick: () -> Unit) {
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, label, tint = Color.White, modifier = Modifier.size(26.dp))
+        Icon(icon, label, tint = tint, modifier = Modifier.size(26.dp))
         Text(label, color = Color.White, fontSize = 11.sp, maxLines = 1)
     }
 }
