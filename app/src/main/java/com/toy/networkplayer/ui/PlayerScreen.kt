@@ -158,7 +158,7 @@ fun PlayerScreen(
     var recoveries by remember { mutableIntStateOf(0) }
     // 새 영상이 실제로 그려지기 전까지 화면을 검게 덮어 이전 영상 잔상/깨진 첫 화면을 숨긴다.
     var switching by remember { mutableStateOf(true) }
-    val load = remember { LoadState() }
+    val load = remember { PlayerLoad() }
 
     fun touch() {
         lastTouch = System.currentTimeMillis()
@@ -699,7 +699,7 @@ private fun applyDecoder(media: Media, mode: Int) {
     }
 }
 
-private class LoadState {
+private class PlayerLoad {
     var index = -1
     var sawPlaying = false
 }
