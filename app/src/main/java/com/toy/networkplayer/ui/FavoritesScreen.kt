@@ -44,10 +44,11 @@ fun FavoritesScreen(
     onBack: () -> Unit,
     onOpenImage: (server: ServerConfig, images: List<SmbEntry>, index: Int) -> Unit,
     onOpenVideo: (server: ServerConfig, videos: List<SmbEntry>, index: Int) -> Unit,
+    memory: FavoritesMemory = remember { FavoritesMemory() },
 ) {
     val context = LocalContext.current
     val columns = remember { context.getSharedPreferences("browser", android.content.Context.MODE_PRIVATE).getInt("columns", 3) }
-    var filter by remember { mutableIntStateOf(0) }
+    var filter by remember { mutableIntStateOf(memory.filter) }
     val byId = remember(servers) { servers.associateBy { it.id } }
 
     // 서버가 지워진 항목은 열 수 없으니 뺀다.
@@ -81,7 +82,7 @@ fun FavoritesScreen(
         Column(Modifier.fillMaxSize().padding(padding)) {
             Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FILTERS.forEachIndexed { i, label ->
-                    FilterChip(selected = filter == i, onClick = { filter = i }, label = { Text(label) })
+                    FilterChip(selected = filter == i, onClick = { filter = i; memory.filter = i }, label = { Text(label) })
                 }
             }
             if (shown.isEmpty()) {
@@ -92,6 +93,7 @@ fun FavoritesScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(if (columns == 0) 3 else columns),
                     modifier = Modifier.fillMaxSize(),
+                    state = rememberGridState(memory.scroll),
                     contentPadding = PaddingValues(10.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -109,4 +111,10 @@ fun FavoritesScreen(
             }
         }
     }
+}
+
+/** 재생 화면에 갔다 와도 필터와 스크롤 위치를 그대로 두기 위한 보관함. */
+class FavoritesMemory {
+    var filter = 0
+    val scroll = ScrollMemory()
 }

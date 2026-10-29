@@ -51,6 +51,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -94,6 +97,48 @@ private val VIEW_OPTIONS = listOf(
     0 to "목록으로 보기",
 )
 
+/**
+ * 다른 화면(재생, 사진, 하위 폴더)에 갔다 와도 그대로 보이도록 폴더 화면이 들고 있는 것들.
+ * 화면 스택의 항목마다 하나씩 붙어 있다.
+ */
+class BrowseMemory {
+    var entries: List<SmbEntry>? = null
+    var shuffled: List<SmbEntry>? = null
+    val scroll = ScrollMemory()
+}
+
+/** 목록/바둑판의 스크롤 위치. */
+class ScrollMemory {
+    var listIndex = 0
+    var listOffset = 0
+    var gridIndex = 0
+    var gridOffset = 0
+}
+
+@Composable
+fun rememberListState(memory: ScrollMemory): LazyListState {
+    val state = remember { LazyListState(memory.listIndex, memory.listOffset) }
+    DisposableEffect(state) {
+        onDispose {
+            memory.listIndex = state.firstVisibleItemIndex
+            memory.listOffset = state.firstVisibleItemScrollOffset
+        }
+    }
+    return state
+}
+
+@Composable
+fun rememberGridState(memory: ScrollMemory): LazyGridState {
+    val state = remember { LazyGridState(memory.gridIndex, memory.gridOffset) }
+    DisposableEffect(state) {
+        onDispose {
+            memory.gridIndex = state.firstVisibleItemIndex
+            memory.gridOffset = state.firstVisibleItemScrollOffset
+        }
+    }
+    return state
+}
+
 private sealed interface LoadState {
     data object Loading : LoadState
     data class Loaded(val entries: List<SmbEntry>) : LoadState
@@ -111,8 +156,10 @@ fun BrowserScreen(
     onOpenImage: (images: List<SmbEntry>, index: Int) -> Unit,
     onOpenVideo: (videos: List<SmbEntry>, index: Int, subtitles: List<SmbEntry>) -> Unit,
     onOpenFavorites: () -> Unit,
+    memory: BrowseMemory = remember { BrowseMemory() },
 ) {
-    var state by remember(server, path) { mutableStateOf<LoadState>(LoadState.Loading) }
+    // 이미 읽어 둔 목록이 있으면 다시 읽지 않고 바로 보여준다(돌아왔을 때 스크롤 위치 유지).
+    var state by remember(server, path) { mutableStateOf<LoadState>(memory.entries?.let { LoadState.Loaded(it) } ?: LoadState.Loading) }
     var reload by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("browser", Context.MODE_PRIVATE) }
@@ -121,7 +168,7 @@ fun BrowserScreen(
     var menuOpen by remember { mutableStateOf(false) }
 
     // 랜덤 정렬 결과. null이면 원래 순서.
-    var shuffled by remember(server, path) { mutableStateOf<List<SmbEntry>?>(null) }
+    var shuffled by remember(server, path) { mutableStateOf(memory.shuffled) }
     var shuffleDialog by remember { mutableStateOf(false) }
     var shuffleProgress by remember { mutableStateOf<String?>(null) }
     var shuffleOptions by remember {
@@ -174,7 +221,10 @@ fun BrowserScreen(
         menuOpen = false
     }
 
+    LaunchedEffect(shuffled) { memory.shuffled = shuffled }
+
     LaunchedEffect(server, path, reload) {
+        if (reload == 0 && memory.entries != null) return@LaunchedEffect
         state = LoadState.Loading
         state = runCatching {
             if (server.share.isBlank()) {
@@ -183,7 +233,7 @@ fun BrowserScreen(
             } else {
                 SmbRepository.list(server, path)
             }
-        }.fold({ LoadState.Loaded(it) }, { LoadState.Failed(it.describe()) })
+        }.fold({ memory.entries = it; LoadState.Loaded(it) }, { LoadState.Failed(it.describe()) })
     }
 
     Scaffold(
@@ -293,7 +343,7 @@ fun BrowserScreen(
                             )
                         }
                         if (columns == 0) {
-                            LazyColumn(Modifier.fillMaxSize()) {
+                            LazyColumn(Modifier.fillMaxSize(), state = rememberListState(memory.scroll)) {
                                 items(shown, key = { it.path + "|" + it.name }) { e ->
                                     ListItem(
                                         modifier = Modifier.combinedClickable(onLongClick = { like(e) }) { open(e) },
@@ -308,6 +358,7 @@ fun BrowserScreen(
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(columns),
                                 modifier = Modifier.fillMaxSize(),
+                                state = rememberGridState(memory.scroll),
                                 contentPadding = PaddingValues(10.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
