@@ -80,7 +80,11 @@ import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.SmbEntry
 import com.toy.networkplayer.data.WatchHistory
 import com.toy.networkplayer.data.LocalStreamServer
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -140,6 +144,21 @@ fun PlayerScreen(
 
     val libVlc = remember { LibVLC(context, arrayListOf("--network-caching=1500", "--audio-time-stretch")) }
     val player = remember { MediaPlayer(libVlc) }
+    // 멈추기/새 영상 넣기/해제는 길게 걸릴 수 있어서 화면 스레드가 아닌 전용 스레드 하나에서 차례로 한다.
+    val engine = remember { Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-engine") } }
+    val engineDispatcher = remember { engine.asCoroutineDispatcher() }
+
+    val prefs = remember { context.getSharedPreferences("player", Context.MODE_PRIVATE) }
+    var decoder by remember { mutableIntStateOf(prefs.getInt("decoder", DECODER_SAFE).coerceIn(0, DECODERS.lastIndex)) }
+    // 영상을 다시 불러올 때(디코더 변경, 멈춤 복구) 올리는 값과 이어 볼 위치.
+    var reloadKey by remember { mutableIntStateOf(0) }
+    var resumeAt by remember { mutableLongStateOf(0L) }
+    // 이 영상만 소프트웨어로 돌리는 중인지(하드웨어 디코딩이 실패했을 때).
+    var softwareFallback by remember { mutableStateOf(false) }
+    var recoveries by remember { mutableIntStateOf(0) }
+    // 새 영상이 실제로 그려지기 전까지 화면을 검게 덮어 이전 영상 잔상/깨진 첫 화면을 숨긴다.
+    var switching by remember { mutableStateOf(true) }
+    val load = remember { LoadState() }
 
     fun touch() {
         lastTouch = System.currentTimeMillis()
@@ -167,7 +186,23 @@ fun PlayerScreen(
 
     fun clampTime(ms: Long) = if (length > 0) ms.coerceIn(0L, length) else ms.coerceAtLeast(0L)
 
+    fun reload(atMs: Long) {
+        resumeAt = atMs.coerceAtLeast(0L)
+        reloadKey++
+    }
+
+    fun cycleDecoder() {
+        decoder = (decoder + 1) % DECODERS.size
+        prefs.edit().putInt("decoder", decoder).apply()
+        softwareFallback = false
+        showHud("디코더: ${DECODERS[decoder]}")
+        reload(time)
+        touch()
+    }
+
     fun seekTo(ms: Long) {
+        // 영상을 갈아끼우는 중에는 엔진이 잠겨 있어 화면이 멈출 수 있으니 무시한다.
+        if (switching) return
         val target = clampTime(ms)
         player.setTime(target)
         time = target
@@ -230,6 +265,7 @@ fun PlayerScreen(
                     playing = true
                     buffering = false
                     error = null
+                    if (switching) load.sawPlaying = true
                     // 영상마다 처음 재생될 때 한 번만 시청 횟수를 올린다.
                     if (countedIndex != index) {
                         countedIndex = index
@@ -239,6 +275,10 @@ fun PlayerScreen(
                 MediaPlayer.Event.Vout -> { readVideoAspect(player)?.let { videoAspect = it } }
                 MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> { playing = false }
                 MediaPlayer.Event.TimeChanged -> {
+                    // 이전 영상에서 늦게 도착한 시간은 버린다.
+                    if (switching && !load.sawPlaying) return@setEventListener
+                    // 새 영상의 시간이 흐르기 시작하면 첫 화면이 나온 것이니 덮개를 걷는다.
+                    switching = false
                     if (!dragging && !gestureSeeking) time = e.timeChanged
                     lastSaved.path = videos[index].path
                     lastSaved.positionMs = e.timeChanged
@@ -255,42 +295,123 @@ fun PlayerScreen(
                         playing = false
                     }
                 }
-                MediaPlayer.Event.EncounteredError -> { error = "재생할 수 없는 파일이거나 연결이 끊겼어요"; buffering = false }
+                MediaPlayer.Event.EncounteredError -> {
+                    if (!softwareFallback && decoder != DECODER_SW) {
+                        // 하드웨어 디코더가 못 여는 영상이면 소프트웨어로 한 번 더 시도한다.
+                        softwareFallback = true
+                        showHud("소프트웨어 디코딩으로 다시 시도")
+                        reload(time)
+                    } else {
+                        error = "재생할 수 없는 파일이거나 연결이 끊겼어요"
+                        buffering = false
+                        switching = false
+                    }
+                }
                 else -> Unit
             }
         }
         onDispose {
             lastSaved.path?.let { WatchHistory.setPosition(server, it, lastSaved.positionMs) }
             player.setEventListener(null)
-            player.stop()
             player.detachViews()
-            player.release()
-            libVlc.release()
+            // 네트워크가 느리면 멈추기가 오래 걸려 뒤로 가기가 굳을 수 있어서 뒤에서 정리한다.
+            engine.execute {
+                player.stop()
+                player.release()
+                libVlc.release()
+            }
+            engine.shutdown()
         }
     }
 
-    LaunchedEffect(index) {
-        // 이전 영상의 위치를 남겨 둔다(바둑판의 진행 막대용).
-        lastSaved.path?.let { WatchHistory.setPosition(server, it, lastSaved.positionMs) }
-        time = 0L
-        length = 0L
+    LaunchedEffect(index, reloadKey) {
+        if (load.index != index) {
+            // 이전 영상의 위치를 남겨 둔다(바둑판의 진행 막대용).
+            lastSaved.path?.let { WatchHistory.setPosition(server, it, lastSaved.positionMs) }
+            load.index = index
+            resumeAt = 0L
+            softwareFallback = false
+            recoveries = 0
+            time = 0L
+            length = 0L
+        }
+        switching = true
+        load.sawPlaying = false
         buffering = true
         error = null
         val video = videos[index]
         // libVLC의 SMB 모듈 대신, 앱 안의 로컬 HTTP 서버를 거쳐 smbj로 읽는다.
         val media = Media(libVlc, LocalStreamServer.url(server, video.path))
-        media.setHWDecoderEnabled(true, false)
-        player.setMedia(media)
-        media.release()
+        applyDecoder(media, if (softwareFallback) DECODER_SW else decoder)
+        if (resumeAt > 0) media.addOption(":start-time=${resumeAt / 1000}")
         // 같은 이름의 자막 파일(영상.smi, 영상.ko.srt 등)을 붙인다.
-        subtitles
+        val subs = subtitles
             .filter { it.baseName.equals(video.baseName, ignoreCase = true) || it.baseName.startsWith(video.baseName + ".", ignoreCase = true) }
-            .forEachIndexed { i, sub ->
-                player.addSlave(IMedia.Slave.Type.Subtitle, LocalStreamServer.url(server, sub.path), i == 0)
-            }
-        player.play()
+            .map { LocalStreamServer.url(server, it.path) }
+        // 이전 영상을 완전히 멈춰 디코더와 화면을 놓아준 뒤에 새 영상을 넣는다.
+        // 다음 영상을 연달아 눌러도 순서대로 처리되도록 취소하지 않는다.
+        withContext(NonCancellable + engineDispatcher) {
+            player.stop()
+            player.setMedia(media)
+            media.release()
+            subs.forEachIndexed { i, uri -> player.addSlave(IMedia.Slave.Type.Subtitle, uri, i == 0) }
+            player.play()
+        }
         applySpeed()
         touch()
+    }
+
+    // 소리는 나는데 화면이 굳거나, 재생 중인데 시간이 안 흐르면 그 자리에서 다시 불러온다.
+    LaunchedEffect(index, reloadKey) {
+        var shownBase = -1
+        var shownTime = 0L
+        var lastTime = -1L
+        var stuckSince = 0L
+        var counting = false
+        while (true) {
+            delay(WATCHDOG_TICK_MS)
+            if (switching || !playing || buffering || gestureSeeking || dragging) {
+                shownBase = -1
+                lastTime = -1L
+                continue
+            }
+            val now = player.time
+            val wall = System.currentTimeMillis()
+            var stalled = false
+
+            if (now != lastTime) {
+                lastTime = now
+                stuckSince = wall
+            } else if (wall - stuckSince > TIME_STALL_MS) {
+                stalled = true
+            }
+
+            if (player.videoTracksCount > 0) {
+                val media = player.media
+                val shown = try { media?.stats?.displayedPictures } finally { media?.release() }
+                if (shown != null) {
+                    // 화면 수 통계가 실제로 올라가는 기기에서만 화면 굳음을 판단한다.
+                    if (shown > 0) counting = true
+                    if (counting) {
+                        if (shown != shownBase || now < shownTime) {
+                            shownBase = shown
+                            shownTime = now
+                        } else if (now - shownTime > FRAME_STALL_MS) {
+                            stalled = true
+                        }
+                    }
+                }
+            }
+
+            if (stalled && recoveries < MAX_RECOVERIES) {
+                recoveries++
+                // 두 번째로 굳으면 이 영상은 소프트웨어로 돌린다.
+                if (recoveries >= 2 && decoder != DECODER_SW) softwareFallback = true
+                showHud("화면이 멈춰서 다시 불러왔어요")
+                reload(now)
+                break
+            }
+        }
     }
 
     // 백그라운드로 가면 일시정지
@@ -370,14 +491,13 @@ fun PlayerScreen(
             hud = "${if (diff >= 0) "+" else "-"}${formatTime(kotlin.math.abs(diff) * 1000)}\n${formatTime(seekTarget)} / ${formatTime(length)}"
             // 손가락을 따라 영상도 바로 움직이도록 짧은 간격으로 실제 탐색을 건다.
             val now = System.currentTimeMillis()
-            if (now - lastLiveSeek > LIVE_SEEK_INTERVAL_MS) {
+            if (!switching && now - lastLiveSeek > LIVE_SEEK_INTERVAL_MS) {
                 lastLiveSeek = now
                 player.setTime(seekTarget, true)
             }
         },
         onSeekEnd = {
-            player.setTime(seekTarget)
-            time = seekTarget
+            seekTo(seekTarget)
             gestureSeeking = false
             hudAt = System.currentTimeMillis()
         },
@@ -413,6 +533,7 @@ fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize().clipToBounds().videoBox(SCALES[scaleIndex], videoAspect, rotation),
         )
+        if (switching) Box(Modifier.fillMaxSize().background(Color.Black))
 
         GestureLayer(locked = locked, callbacks = gestures)
 
@@ -478,7 +599,7 @@ fun PlayerScreen(
                         dragging = true
                         dragValue = v
                         // 끌고 있는 동안에도 영상이 따라오도록 바로 이동시킨다.
-                        player.setTime(v.toLong(), true)
+                        if (!switching) player.setTime(v.toLong(), true)
                         touch()
                     },
                     onDragEnd = {
@@ -536,6 +657,8 @@ fun PlayerScreen(
                 onLike = { like() },
                 orientationLabel = ORIENTATIONS[orientationMode],
                 onOrientation = { cycleOrientation() },
+                decoderLabel = if (softwareFallback) "SW(자동)" else DECODERS_SHORT[decoder],
+                onDecoder = { cycleDecoder() },
             ),
         )
     }
@@ -545,7 +668,41 @@ private val ORIENTATIONS = listOf("자동 회전", "가로 고정", "세로 고�
 private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 private const val HOLD_SPEED = 2f
 private const val SWIPE_RANGE_MS = 120_000L
-private const val LIVE_SEEK_INTERVAL_MS = 80L
+// 너무 잦은 탐색은 스트림 연결을 계속 끊었다 다시 열게 해서 멈춤의 원인이 된다.
+private const val LIVE_SEEK_INTERVAL_MS = 150L
+private const val WATCHDOG_TICK_MS = 1500L
+private const val TIME_STALL_MS = 8000L
+private const val FRAME_STALL_MS = 4000L
+private const val MAX_RECOVERIES = 3
+
+private const val DECODER_SAFE = 0
+private const val DECODER_FAST = 1
+private const val DECODER_SW = 2
+private val DECODERS = listOf("하드웨어(안정)", "하드웨어(빠름)", "소프트웨어")
+private val DECODERS_SHORT = listOf("HW 안정", "HW 빠름", "SW")
+
+/**
+ * 디코더 방식.
+ * 안정: 하드웨어로 풀되 화면에 직접 그리지 않고 한 번 거쳐 그린다. TextureView에서 녹색/검은 번쩍임이 줄어든다.
+ * 빠름: 하드웨어가 화면에 바로 그린다(배터리 유리, 일부 기기에서 깨짐).
+ * 소프트웨어: CPU로 푼다. 가장 호환성이 좋지만 고해상도는 버거울 수 있다.
+ */
+private fun applyDecoder(media: Media, mode: Int) {
+    when (mode) {
+        DECODER_SAFE -> {
+            media.setHWDecoderEnabled(true, false)
+            media.addOption(":no-mediacodec-dr")
+            media.addOption(":no-omxil-dr")
+        }
+        DECODER_FAST -> media.setHWDecoderEnabled(true, false)
+        else -> media.setHWDecoderEnabled(false, false)
+    }
+}
+
+private class LoadState {
+    var index = -1
+    var sawPlaying = false
+}
 
 private class SavedPosition {
     var path: String? = null

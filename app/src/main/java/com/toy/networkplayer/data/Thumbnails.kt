@@ -3,8 +3,8 @@ package com.toy.networkplayer.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
@@ -25,7 +25,7 @@ object Thumbnails {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
     private val failed = mutableSetOf<String>()
-    private val gate = Semaphore(3)
+    private val gate = Semaphore(4)
     private var dir: File? = null
 
     fun init(context: Context) {
@@ -96,16 +96,7 @@ object Thumbnails {
     private suspend fun videoFrame(server: ServerConfig, entry: SmbEntry): Bitmap? = withContext(Dispatchers.IO) {
         SmbRepository.openRead(server, entry.path).use { file ->
             val size = file.fileInformation.standardInformation.endOfFile
-            val source = object : MediaDataSource() {
-                override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
-                    if (position >= size) return -1
-                    val n = minOf(length.toLong(), size - position).toInt()
-                    return file.read(buffer, position, offset, n)
-                }
-
-                override fun getSize(): Long = size
-                override fun close() = Unit
-            }
+            val source = SmbDataSource(file, size)
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(source)
@@ -113,7 +104,12 @@ object Thumbnails {
                 WatchHistory.setDuration(server, entry.path, durationMs)
                 // 첫 장면은 검은 화면인 경우가 많아서 조금 뒤 장면을 쓴다.
                 val atUs = (durationMs * 100L).coerceAtMost(30_000_000L)
-                val frame = retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return@use null
+                // 가능하면 디코더가 처음부터 작은 크기로 뽑게 해서 큰 원본 프레임을 만들지 않는다.
+                val frame = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    retriever.getScaledFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, SIZE, SIZE)
+                } else {
+                    retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                } ?: return@use null
                 scaleDown(frame)
             } finally {
                 runCatching { retriever.release() }
@@ -129,15 +125,7 @@ object Thumbnails {
                     val size = file.fileInformation.standardInformation.endOfFile
                     val retriever = MediaMetadataRetriever()
                     try {
-                        retriever.setDataSource(object : MediaDataSource() {
-                            override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
-                                if (position >= size) return -1
-                                return file.read(buffer, position, offset, minOf(length.toLong(), size - position).toInt())
-                            }
-
-                            override fun getSize(): Long = size
-                            override fun close() = Unit
-                        })
+                        retriever.setDataSource(SmbDataSource(file, size))
                         retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                     } finally {
                         runCatching { retriever.release() }

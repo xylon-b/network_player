@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
@@ -71,6 +72,8 @@ class FloatingActions(
     val onLike: () -> Unit,
     val orientationLabel: String,
     val onOrientation: () -> Unit,
+    val decoderLabel: String,
+    val onDecoder: () -> Unit,
 )
 
 /**
@@ -168,6 +171,7 @@ private fun Panel(actions: FloatingActions, modifier: Modifier = Modifier) {
                 tint = if (actions.liked) HEART else Color.White,
             )
             PanelButton(Icons.Default.ScreenRotation, actions.orientationLabel, actions.onOrientation)
+            PanelButton(Icons.Default.Memory, actions.decoderLabel, actions.onDecoder)
         }
     }
 }
