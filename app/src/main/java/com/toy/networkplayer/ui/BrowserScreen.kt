@@ -2,6 +2,7 @@
 
 package com.toy.networkplayer.ui
 
+import androidx.compose.material.icons.filled.Search
 import android.view.HapticFeedbackConstants
 import com.toy.networkplayer.data.Favorites
 import androidx.compose.foundation.combinedClickable
@@ -156,6 +157,7 @@ fun BrowserScreen(
     onOpenImage: (images: List<SmbEntry>, index: Int) -> Unit,
     onOpenVideo: (videos: List<SmbEntry>, index: Int, subtitles: List<SmbEntry>) -> Unit,
     onOpenFavorites: () -> Unit,
+    onOpenSearch: () -> Unit,
     memory: BrowseMemory = remember { BrowseMemory() },
 ) {
     // 이미 읽어 둔 목록이 있으면 다시 읽지 않고 바로 보여준다(돌아왔을 때 스크롤 위치 유지).
@@ -258,6 +260,9 @@ fun BrowserScreen(
                         IconButton(onClick = { shuffleDialog = true }) {
                             Icon(Icons.Default.Shuffle, "랜덤 정렬", tint = if (shuffled != null) MaterialTheme.colorScheme.primary else LocalContentColor.current)
                         }
+                    }
+                    if (server.share.isNotBlank()) {
+                        IconButton(onClick = onOpenSearch) { Icon(Icons.Default.Search, "검색") }
                     }
                     IconButton(onClick = onOpenFavorites) { Icon(Icons.Default.Favorite, "즐겨찾기") }
                     IconButton(onClick = { reload++ }) { Icon(Icons.Default.Refresh, "새로고침") }
