@@ -1,5 +1,8 @@
 package com.toy.networkplayer
 
+import com.toy.networkplayer.ui.SearchScreen
+import com.toy.networkplayer.ui.SearchMemory
+import com.toy.networkplayer.data.VideoSettings
 import com.toy.networkplayer.ui.FavoritesScreen
 import com.toy.networkplayer.data.Favorites
 import android.os.Bundle
@@ -32,6 +35,7 @@ sealed interface Screen {
     // memory: 이 화면에서 다른 화면으로 갔다 돌아왔을 때 목록과 스크롤 위치를 그대로 보여주기 위한 보관함.
     data class Favorites(val memory: FavoritesMemory = FavoritesMemory()) : Screen
     data class Browse(val server: ServerConfig, val path: String, val memory: BrowseMemory = BrowseMemory()) : Screen
+    data class Search(val server: ServerConfig, val path: String, val memory: SearchMemory = SearchMemory()) : Screen
     data class Photos(val server: ServerConfig, val images: List<SmbEntry>, val start: Int) : Screen
     data class Player(
         val server: ServerConfig,
@@ -49,12 +53,16 @@ class MainActivity : ComponentActivity() {
         WatchHistory.init(applicationContext)
         Thumbnails.init(applicationContext)
         Favorites.init(applicationContext)
+        VideoSettings.init(applicationContext)
 
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 val stack = remember { mutableStateListOf<Screen>(Screen.Servers) }
                 fun push(s: Screen) = stack.add(s)
-                fun pop() = stack.removeAt(stack.lastIndex)
+                fun pop() {
+                    // 검색 화면을 닫으면 돌고 있던 검색도 멈춘다.
+                    (stack.removeAt(stack.lastIndex) as? Screen.Search)?.memory?.dispose()
+                }
 
                 BackHandler(enabled = stack.size > 1) { pop() }
 
@@ -83,7 +91,17 @@ class MainActivity : ComponentActivity() {
                             onOpenImage = { images, index -> push(Screen.Photos(top.server, images, index)) },
                             onOpenVideo = { videos, index, subs -> push(Screen.Player(top.server, videos, index, subs)) },
                             onOpenFavorites = { push(Screen.Favorites()) },
+                            onOpenSearch = { push(Screen.Search(top.server, top.path)) },
                             memory = top.memory,
+                        )
+                        is Screen.Search -> SearchScreen(
+                            server = top.server,
+                            path = top.path,
+                            memory = top.memory,
+                            onBack = { pop() },
+                            onOpenFolder = { push(Screen.Browse(top.server, it.path)) },
+                            onOpenImage = { images, index -> push(Screen.Photos(top.server, images, index)) },
+                            onOpenVideo = { videos, index, subs -> push(Screen.Player(top.server, videos, index, subs)) },
                         )
                         is Screen.Photos -> PhotoViewerScreen(
                             server = top.server,

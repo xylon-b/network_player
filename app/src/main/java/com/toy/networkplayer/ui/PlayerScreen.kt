@@ -1,5 +1,7 @@
 package com.toy.networkplayer.ui
 
+import com.toy.networkplayer.data.VideoSetting
+import com.toy.networkplayer.data.VideoSettings
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Favorite
 import com.toy.networkplayer.data.Favorites
@@ -119,7 +121,9 @@ fun PlayerScreen(
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(0f) }
     // 0: 폰 방향 따라가기, 1: 가로 고정, 2: 세로 고정
-    var orientationMode by remember { mutableIntStateOf(0) }
+    // 화면비·회전·화면 방향은 영상마다 따로 저장된 값으로 시작한다(없으면 원래 비율).
+    val initialSetting = remember { VideoSettings.get(videos[index]) }
+    var orientationMode by remember { mutableIntStateOf(initialSetting.orientation.coerceIn(0, ORIENTATIONS.lastIndex)) }
 
     // 제스처/옵션 상태
     var locked by remember { mutableStateOf(false) }
@@ -131,8 +135,8 @@ fun PlayerScreen(
     var lastLiveSeek by remember { mutableLongStateOf(0L) }
     var speedIndex by remember { mutableIntStateOf(SPEEDS.indexOf(1f)) }
     var holding by remember { mutableStateOf(false) }
-    var scaleIndex by remember { mutableIntStateOf(0) }
-    var rotation by remember { mutableIntStateOf(0) }
+    var scaleIndex by remember { mutableIntStateOf(initialSetting.scale.coerceIn(0, SCALES.lastIndex)) }
+    var rotation by remember { mutableIntStateOf(initialSetting.rotation) }
     var countedIndex by remember { mutableIntStateOf(-1) }
     // 재생 위치는 자주 바뀌니 화면 갱신을 일으키지 않는 보관함에 둔다.
     val lastSaved = remember { SavedPosition() }
@@ -172,8 +176,19 @@ fun PlayerScreen(
 
     val liked = Favorites.isFavorite(videos[index])
 
+    // 다음/이전 영상으로 넘어가면 그 영상에 저장된 화면 설정으로 바꾼다.
+    LaunchedEffect(index) {
+        val s = VideoSettings.get(videos[index])
+        scaleIndex = s.scale.coerceIn(0, SCALES.lastIndex)
+        rotation = s.rotation
+        orientationMode = s.orientation.coerceIn(0, ORIENTATIONS.lastIndex)
+    }
+
+    fun saveSetting() = VideoSettings.set(videos[index], VideoSetting(scaleIndex, rotation, orientationMode))
+
     fun cycleOrientation() {
         orientationMode = (orientationMode + 1) % ORIENTATIONS.size
+        saveSetting()
         showHud(ORIENTATIONS[orientationMode])
         touch()
     }
@@ -631,6 +646,7 @@ fun PlayerScreen(
                 },
                 onScale = {
                     scaleIndex = (scaleIndex + 1) % SCALES.size
+                    saveSetting()
                     showHud(SCALES[scaleIndex].label)
                     touch()
                 },
@@ -644,6 +660,7 @@ fun PlayerScreen(
                 },
                 onRotate = {
                     rotation = (rotation + 90) % 360
+                    saveSetting()
                     showHud("영상 회전 ${rotation}°")
                     touch()
                 },
@@ -715,7 +732,7 @@ private enum class FitMode { FIT, COVER, STRETCH }
 private class AspectOption(val label: String, val mode: FitMode, val ratio: Float?)
 
 private val SCALES = listOf(
-    AspectOption("맞춤", FitMode.FIT, null),
+    AspectOption("원래 비율", FitMode.FIT, null),
     AspectOption("꽉 차게", FitMode.COVER, null),
     AspectOption("늘이기", FitMode.STRETCH, null),
     AspectOption("16:9", FitMode.FIT, 16f / 9f),
