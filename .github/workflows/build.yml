@@ -19,6 +19,14 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # Gradle 배포 서버가 가끔 504를 돌려줘서, 빌드 전에 Gradle 내려받기만 몇 번 재시도한다.
+      - name: Download Gradle (retry)
+        run: |
+          for i in 1 2 3 4 5; do
+            ./gradlew --version && exit 0
+            echo "Gradle download failed (try $i), retrying..."; sleep $((i * 20))
+          done
+          exit 1
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
