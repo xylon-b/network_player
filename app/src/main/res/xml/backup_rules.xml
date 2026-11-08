@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 이하 자동 백업. 공유폴더 비밀번호가 담긴 서버 목록은 구글 드라이브 백업에서 뺀다. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="servers.xml" />
+    <exclude domain="file" path="thumbs/" />
+</full-backup-content>
