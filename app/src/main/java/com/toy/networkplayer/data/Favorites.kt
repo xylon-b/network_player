@@ -76,6 +76,40 @@ object Favorites {
         save()
     }
 
+    /** 이름이 바뀐 파일/폴더를 따라간다. 폴더면 그 안에 든 좋아요의 경로도 고친다. */
+    fun renamed(server: ServerConfig, old: SmbEntry, newPath: String) {
+        var changed = false
+        val newName = newPath.substringAfterLast('\\')
+        items.values.filter { it.serverId == server.id && it.share == server.share }.forEach { f ->
+            when {
+                !old.isDirectory && key(f.name) == key(old.name) -> {
+                    items.remove(key(f.name))
+                    items[key(newName)] = f.copy(name = newName, path = newPath)
+                    changed = true
+                }
+                old.isDirectory && f.path.lowercase().startsWith(old.path.lowercase() + "\\") -> {
+                    items[key(f.name)] = f.copy(path = newPath + f.path.substring(old.path.length))
+                    changed = true
+                }
+            }
+        }
+        if (changed) save()
+    }
+
+    /** 지운 파일/폴더의 좋아요를 뺀다. */
+    fun deleted(server: ServerConfig, entry: SmbEntry) {
+        val gone = items.values.filter {
+            if (entry.isDirectory) {
+                it.serverId == server.id && it.share == server.share && it.path.lowercase().startsWith(entry.path.lowercase() + "\\")
+            } else {
+                key(it.name) == key(entry.name)
+            }
+        }
+        if (gone.isEmpty()) return
+        gone.forEach { items.remove(key(it.name)) }
+        save()
+    }
+
     private fun save() {
         val f = file ?: return
         val snapshot = items.values.toList()
