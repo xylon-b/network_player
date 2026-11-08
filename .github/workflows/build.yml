@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # 업로드 키가 GitHub Secrets에 등록돼 있을 때만 플레이스토어용 AAB를 만든다.
+      HAS_UPLOAD_KEY: ${{ secrets.NP_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -16,9 +19,48 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # Gradle 배포 서버가 가끔 504를 돌려줘서, 빌드 전에 Gradle 내려받기만 몇 번 재시도한다.
+      - name: Download Gradle (retry)
+        run: |
+          for i in 1 2 3 4 5; do
+            ./gradlew --version && exit 0
+            echo "Gradle download failed (try $i), retrying..."; sleep $((i * 20))
+          done
+          exit 1
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: network-player-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      # 플레이스토어용 (업로드 키로 서명한 AAB)
+      - name: Restore upload key
+        if: env.HAS_UPLOAD_KEY == 'true'
+        run: echo "${{ secrets.NP_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/upload-key.jks"
+      - name: Build release AAB
+        if: env.HAS_UPLOAD_KEY == 'true'
+        env:
+          NP_KEYSTORE_FILE: ${{ runner.temp }}/upload-key.jks
+          NP_KEYSTORE_PASSWORD: ${{ secrets.NP_KEYSTORE_PASSWORD }}
+          NP_KEY_ALIAS: ${{ secrets.NP_KEY_ALIAS }}
+          NP_KEY_PASSWORD: ${{ secrets.NP_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease --stacktrace
+      - uses: actions/upload-artifact@v4
+        if: env.HAS_UPLOAD_KEY == 'true'
+        with:
+          name: network-player-release-aab
+          path: app/build/outputs/bundle/release/app-release.aab
+
+      # 플레이스토어 16KB 페이지 요구사항 확인: 모든 64비트 .so의 LOAD 정렬이 16KB(0x4000) 이상이어야 한다.
+      - name: Check 16 KB page alignment
+        run: |
+          mkdir -p /tmp/apk && unzip -q -o app/build/outputs/apk/debug/app-debug.apk 'lib/*' -d /tmp/apk
+          bad=0
+          for so in /tmp/apk/lib/arm64-v8a/*.so /tmp/apk/lib/x86_64/*.so; do
+            for a in $(readelf -lW "$so" | awk '/LOAD/{print $NF}'); do
+              if [ $((a)) -lt $((0x4000)) ]; then echo "NOT 16KB aligned: $so ($a)"; bad=1; fi
+            done
+          done
+          [ $bad -eq 0 ] && echo "All native libraries are 16 KB aligned"
+          exit $bad

@@ -22,6 +22,7 @@ import com.toy.networkplayer.data.ServerStore
 import com.toy.networkplayer.data.SmbEntry
 import com.toy.networkplayer.data.Thumbnails
 import com.toy.networkplayer.data.WatchHistory
+import com.toy.networkplayer.ui.AboutScreen
 import com.toy.networkplayer.ui.BrowserScreen
 import com.toy.networkplayer.ui.BrowseMemory
 import com.toy.networkplayer.ui.FavoritesMemory
@@ -32,6 +33,7 @@ import com.toy.networkplayer.ui.ServerListScreen
 /** 화면 스택. 맨 위가 지금 보이는 화면. */
 sealed interface Screen {
     data object Servers : Screen
+    data object About : Screen
     // memory: 이 화면에서 다른 화면으로 갔다 돌아왔을 때 목록과 스크롤 위치를 그대로 보여주기 위한 보관함.
     data class Favorites(val memory: FavoritesMemory = FavoritesMemory()) : Screen
     data class Browse(val server: ServerConfig, val path: String, val memory: BrowseMemory = BrowseMemory()) : Screen
@@ -74,7 +76,9 @@ class MainActivity : ComponentActivity() {
                             store = store,
                             onOpen = { push(Screen.Browse(it, "")) },
                             onOpenFavorites = { push(Screen.Favorites()) },
+                            onOpenAbout = { push(Screen.About) },
                         )
+                        Screen.About -> AboutScreen(onBack = { pop() })
                         is Screen.Favorites -> FavoritesScreen(
                             servers = store.load(),
                             onBack = { pop() },
