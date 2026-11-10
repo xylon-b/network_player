@@ -480,6 +480,24 @@ fun PlayerScreen(
                 }
             }
         },
+        onLongPress = { zone ->
+            when (zone) {
+                TapZone.LEFT, TapZone.RIGHT -> {
+                    activity.window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    if (zone == TapZone.LEFT) {
+                        if (index > 0) { index--; showHud("⏮ 이전 영상") } else showHud("첫 영상이에요")
+                    } else {
+                        if (index < videos.lastIndex) { index++; showHud("다음 영상 ⏭") } else showHud("마지막 영상이에요")
+                    }
+                }
+                TapZone.CENTER -> {
+                    holding = true
+                    applySpeed()
+                    hud = "${formatSpeed(HOLD_SPEED)} ▶▶"
+                    hudAt = Long.MAX_VALUE
+                }
+            }
+        },
         onHoldStart = {
             holding = true
             applySpeed()

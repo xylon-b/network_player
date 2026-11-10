@@ -34,9 +34,9 @@ import com.toy.networkplayer.data.MediaKind
 import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.SmbEntry
 
-private val FILTERS = listOf("전체", "영상", "사진")
+private val FILTERS = listOf("전체", "폴더", "영상", "사진")
 
-/** 하트를 누른 사진·영상만 모아 보는 화면. 꾹 누르면 목록에서 뺀다. */
+/** 하트를 누른 폴더·사진·영상을 모아 보는 화면. 폴더는 위에, 누르면 그 폴더로 들어간다. 꾹 누르면 목록에서 뺀다. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FavoritesScreen(
@@ -44,6 +44,7 @@ fun FavoritesScreen(
     onBack: () -> Unit,
     onOpenImage: (server: ServerConfig, images: List<SmbEntry>, index: Int) -> Unit,
     onOpenVideo: (server: ServerConfig, videos: List<SmbEntry>, index: Int) -> Unit,
+    onOpenFolder: (server: ServerConfig, folder: SmbEntry) -> Unit,
     memory: FavoritesMemory = remember { FavoritesMemory() },
 ) {
     val context = LocalContext.current
@@ -52,11 +53,14 @@ fun FavoritesScreen(
     val byId = remember(servers) { servers.associateBy { it.id } }
 
     // 서버가 지워진 항목은 열 수 없으니 뺀다.
-    val all = Favorites.all().mapNotNull { f -> byId[f.serverId]?.let { s -> s.copy(share = f.share) to f.entry } }
+    val all = Favorites.all()
+        .mapNotNull { f -> byId[f.serverId]?.let { s -> s.copy(share = f.share) to f.entry } }
+        .sortedBy { !it.second.isDirectory }
     val shown = all.filter { (_, e) ->
         when (filter) {
-            1 -> e.kind == MediaKind.VIDEO
-            2 -> e.kind == MediaKind.IMAGE
+            1 -> e.kind == MediaKind.FOLDER
+            2 -> e.kind == MediaKind.VIDEO
+            3 -> e.kind == MediaKind.IMAGE
             else -> true
         }
     }
@@ -67,6 +71,7 @@ fun FavoritesScreen(
         when (e.kind) {
             MediaKind.VIDEO -> onOpenVideo(server, same, same.indexOf(e))
             MediaKind.IMAGE -> onOpenImage(server, same, same.indexOf(e))
+            MediaKind.FOLDER -> onOpenFolder(server, e)
             else -> Unit
         }
     }
@@ -87,7 +92,7 @@ fun FavoritesScreen(
             }
             if (shown.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("파일을 꾹 누르거나 재생 화면의 ♥를 눌러 추가하세요", style = MaterialTheme.typography.bodyMedium)
+                    Text("폴더나 파일을 꾹 눌러 좋아요를 고르거나\n재생 화면의 ♥를 눌러 추가하세요", textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
                 }
             } else {
                 LazyVerticalGrid(
@@ -98,7 +103,7 @@ fun FavoritesScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    items(shown, key = { it.second.name }) { (server, e) ->
+                    items(shown, key = { (s, e) -> if (e.isDirectory) "dir|${s.id}|${s.share}|${e.path}" else e.name }) { (server, e) ->
                         Tile(
                             server,
                             e,

@@ -81,6 +81,39 @@ object WatchHistory {
 
     fun setPosition(server: ServerConfig, path: String, ms: Long) = update(key(server, path)) { it.copy(positionMs = ms) }
 
+    /** 이름이 바뀐 파일/폴더의 기록을 새 경로로 옮긴다. 폴더면 안에 든 영상 기록도 같이. */
+    fun renamed(server: ServerConfig, old: SmbEntry, newPath: String) {
+        val oldKey = key(server, old.path)
+        val newKey = key(server, newPath)
+        var changed = false
+        records.keys.toList().forEach { k ->
+            val moved = when {
+                k == oldKey -> newKey
+                old.isDirectory && k.startsWith(oldKey + "\\") -> newKey + k.substring(oldKey.length)
+                else -> null
+            }
+            if (moved != null) {
+                records.remove(k)?.let { records[moved] = it }
+                changed = true
+            }
+        }
+        if (changed) save()
+        if (!old.isDirectory) {
+            durations.remove(nameKey(old.path))?.let {
+                durations[nameKey(newPath)] = it
+                saveDurations()
+            }
+        }
+    }
+
+    fun deleted(server: ServerConfig, entry: SmbEntry) {
+        val k = key(server, entry.path)
+        val gone = records.keys.filter { it == k || (entry.isDirectory && it.startsWith(k + "\\")) }
+        gone.forEach { records.remove(it) }
+        if (gone.isNotEmpty()) save()
+        if (!entry.isDirectory && durations.remove(nameKey(entry.path)) != null) saveDurations()
+    }
+
     private fun update(k: String, change: (WatchRecord) -> WatchRecord) {
         records[k] = change(records[k] ?: WatchRecord())
         save()

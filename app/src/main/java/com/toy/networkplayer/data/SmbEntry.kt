@@ -8,6 +8,8 @@ data class SmbEntry(
     val path: String,
     val isDirectory: Boolean,
     val size: Long,
+    /** 마지막으로 바뀐 시각(ms). 모르면 0. */
+    val modified: Long = 0L,
 ) {
     val kind: MediaKind
         get() = when {

@@ -84,6 +84,23 @@ object Thumbnails {
         return bmp
     }
 
+    /** 이름이 바뀐 파일의 썸네일을 새 이름으로 옮긴다. */
+    fun renamed(old: SmbEntry, newName: String) {
+        val from = key(old)
+        val to = newName.lowercase()
+        cache.remove(from)?.let { cache.put(to, it) }
+        val src = diskFile(from)
+        val dst = diskFile(to)
+        if (src != null && dst != null && src.exists()) runCatching { src.renameTo(dst) }
+        synchronized(failed) { failed.remove(to) }
+    }
+
+    fun deleted(entry: SmbEntry) {
+        val k = key(entry)
+        cache.remove(k)
+        diskFile(k)?.delete()
+    }
+
     /** 저장된 썸네일 전체 크기(바이트). */
     fun diskUsage(): Long = dir?.listFiles()?.sumOf { it.length() } ?: 0L
 

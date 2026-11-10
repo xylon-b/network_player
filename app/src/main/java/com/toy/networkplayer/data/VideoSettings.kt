@@ -50,6 +50,17 @@ object VideoSettings {
         save()
     }
 
+    fun renamed(old: SmbEntry, newName: String) {
+        items.remove(key(old))?.let {
+            items[newName.lowercase()] = it
+            save()
+        }
+    }
+
+    fun deleted(entry: SmbEntry) {
+        if (items.remove(key(entry)) != null) save()
+    }
+
     private fun save() {
         val f = file ?: return
         val snapshot = HashMap(items)

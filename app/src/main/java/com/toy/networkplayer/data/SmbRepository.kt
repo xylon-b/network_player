@@ -109,6 +109,7 @@ object SmbRepository {
                     path = join(path, it.fileName),
                     isDirectory = it.fileAttributes and dirMask != 0L,
                     size = it.endOfFile,
+                    modified = runCatching { it.lastWriteTime.toEpochMillis() }.getOrDefault(0L),
                 )
             }
             .sortedWith(compareBy<SmbEntry> { !it.isDirectory }.thenBy(NaturalOrder) { it.name })
@@ -147,6 +148,27 @@ object SmbRepository {
             while (bounds.outWidth / (sample * 2) >= maxSide || bounds.outHeight / (sample * 2) >= maxSide) sample *= 2
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
         }
+    }
+
+    /** 파일이나 폴더 이름을 바꾼다. 같은 이름이 이미 있으면 실패한다. 새 경로를 돌려준다. */
+    suspend fun rename(server: ServerConfig, entry: SmbEntry, newName: String): String = withContext(Dispatchers.IO) {
+        val newPath = join(parent(entry.path), newName)
+        val share = share(server)
+        share.open(
+            entry.path,
+            EnumSet.of(AccessMask.DELETE, AccessMask.GENERIC_READ),
+            null,
+            SMB2ShareAccess.ALL,
+            SMB2CreateDisposition.FILE_OPEN,
+            null,
+        ).use { it.rename(newPath, false) }
+        newPath
+    }
+
+    /** 파일을 지운다. 폴더면 안에 든 것까지 전부 지운다. */
+    suspend fun delete(server: ServerConfig, entry: SmbEntry) = withContext(Dispatchers.IO) {
+        val share = share(server)
+        if (entry.isDirectory) share.rmdir(entry.path, true) else share.rm(entry.path)
     }
 
     fun join(parent: String, name: String) = if (parent.isEmpty()) name else "$parent\\$name"
@@ -191,6 +213,8 @@ fun Throwable.describe(): String {
 private fun explain(msg: String): String = when {
     "STATUS_LOGON_FAILURE" in msg -> "사용자 이름이나 비밀번호가 맞지 않아요"
     "STATUS_BAD_NETWORK_NAME" in msg -> "그 공유 이름을 찾을 수 없어요. 공유 이름을 비워두고 목록에서 골라보세요"
+    "STATUS_OBJECT_NAME_COLLISION" in msg -> "같은 이름이 이미 있어요"
+    "STATUS_SHARING_VIOLATION" in msg -> "PC에서 이 파일을 쓰고 있어서 바꿀 수 없어요"
     "STATUS_ACCESS_DENIED" in msg -> "접근 권한이 없어요. 윈도우 공유 설정에서 이 계정을 허용해주세요"
     "timed out" in msg.lowercase() || "timeout" in msg.lowercase() -> "PC에 연결할 수 없어요. 주소와 같은 와이파이인지 확인해주세요 ($msg)"
     else -> msg

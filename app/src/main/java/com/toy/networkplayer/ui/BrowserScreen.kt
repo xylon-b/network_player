@@ -89,6 +89,36 @@ import com.toy.networkplayer.data.ServerConfig
 import com.toy.networkplayer.data.SmbEntry
 import com.toy.networkplayer.data.SmbRepository
 import com.toy.networkplayer.data.describe
+import com.toy.networkplayer.data.FileOps
+import com.toy.networkplayer.data.NaturalOrder
+
+/** 폴더는 언제나 위에, 그 안에서 고른 기준으로 줄 세운다. */
+enum class SortOrder(val label: String) {
+    NAME("이름순 (가나다)"),
+    NAME_DESC("이름 역순"),
+    NEWEST("최신 날짜순"),
+    OLDEST("오래된 날짜순"),
+    LARGEST("큰 파일순"),
+    SMALLEST("작은 파일순");
+
+    fun apply(list: List<SmbEntry>): List<SmbEntry> {
+        val byName = compareBy(NaturalOrder) { e: SmbEntry -> e.name }
+        val inner: Comparator<SmbEntry> = when (this) {
+            NAME -> byName
+            NAME_DESC -> byName.reversed()
+            NEWEST -> compareByDescending<SmbEntry> { it.modified }.then(byName)
+            OLDEST -> compareBy<SmbEntry> { it.modified }.then(byName)
+            // 폴더는 크기가 0이라 크기 정렬일 때는 이름순으로 둔다.
+            LARGEST -> compareByDescending<SmbEntry> { it.size }.then(byName)
+            SMALLEST -> compareBy<SmbEntry> { it.size }.then(byName)
+        }
+        return list.sortedWith(compareBy<SmbEntry> { !it.isDirectory }.then(inner))
+    }
+
+    companion object {
+        fun from(name: String?) = entries.firstOrNull { it.name == name } ?: NAME
+    }
+}
 
 private val VIEW_OPTIONS = listOf(
     5 to "아이콘 아주 작게 (5열)",
@@ -168,6 +198,12 @@ fun BrowserScreen(
     // 0 = 목록, 2~5 = 한 줄에 놓을 칸 수
     var columns by remember { mutableIntStateOf(prefs.getInt("columns", 3)) }
     var menuOpen by remember { mutableStateOf(false) }
+    var sort by remember { mutableStateOf(SortOrder.from(prefs.getString("sort", null))) }
+    // 꾹 누른 파일(메뉴), 이름 바꾸는 중인 파일, 지우기 확인 중인 파일
+    var actionTarget by remember { mutableStateOf<SmbEntry?>(null) }
+    var renameTarget by remember { mutableStateOf<SmbEntry?>(null) }
+    var deleteTarget by remember { mutableStateOf<SmbEntry?>(null) }
+    var working by remember { mutableStateOf(false) }
 
     // 랜덤 정렬 결과. null이면 원래 순서.
     var shuffled by remember(server, path) { mutableStateOf(memory.shuffled) }
@@ -221,6 +257,44 @@ fun BrowserScreen(
         columns = c
         prefs.edit().putInt("columns", c).apply()
         menuOpen = false
+    }
+
+    fun setSort(o: SortOrder) {
+        sort = o
+        prefs.edit().putString("sort", o.name).apply()
+        menuOpen = false
+    }
+
+    /** 바꾸거나 지운 결과를 다시 읽지 않고 목록에 바로 반영한다. */
+    fun replaceEntry(old: SmbEntry, new: SmbEntry?) {
+        val loaded = (state as? LoadState.Loaded)?.entries ?: return
+        val updated = if (new == null) loaded.filter { it != old } else loaded.map { if (it == old) new else it }
+        memory.entries = updated
+        state = LoadState.Loaded(updated)
+        shuffled = shuffled?.let { list -> if (new == null) list.filter { it != old } else list.map { if (it == old) new else it } }
+    }
+
+    fun doRename(e: SmbEntry, newName: String) {
+        renameTarget = null
+        if (newName == e.name) return
+        working = true
+        scope.launch {
+            runCatching { FileOps.rename(server, e, newName) }
+                .onSuccess { replaceEntry(e, it); Toast.makeText(context, "이름을 바꿨어요", Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(context, "이름을 못 바꿨어요: ${it.describe()}", Toast.LENGTH_LONG).show() }
+            working = false
+        }
+    }
+
+    fun doDelete(e: SmbEntry) {
+        deleteTarget = null
+        working = true
+        scope.launch {
+            runCatching { FileOps.delete(server, e) }
+                .onSuccess { replaceEntry(e, null); Toast.makeText(context, "지웠어요", Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(context, "못 지웠어요: ${it.describe()}", Toast.LENGTH_LONG).show() }
+            working = false
+        }
     }
 
     LaunchedEffect(shuffled) { memory.shuffled = shuffled }
@@ -277,6 +351,15 @@ fun BrowserScreen(
                                     onClick = { setColumns(c) },
                                 )
                             }
+                            if (server.share.isNotBlank()) {
+                                HorizontalDivider()
+                                SortOrder.entries.forEach { o ->
+                                    DropdownMenuItem(
+                                        text = { Text(if (o == sort) "✓ ${o.label}" else "   ${o.label}") },
+                                        onClick = { setSort(o) },
+                                    )
+                                }
+                            }
                             HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("   썸네일 저장 비우기 (${Thumbnails.diskUsage() / (1024 * 1024)}MB)") },
@@ -318,8 +401,9 @@ fun BrowserScreen(
                             onShuffle = { shuffleDialog = false; runShuffle(s.entries, it) },
                         )
                     }
-                    val shown = shuffled ?: s.entries
-                    val images = s.entries.filter { it.kind == MediaKind.IMAGE }
+                    val sorted = remember(s.entries, sort) { if (server.share.isBlank()) s.entries else sort.apply(s.entries) }
+                    val shown = shuffled ?: sorted
+                    val images = sorted.filter { it.kind == MediaKind.IMAGE }
                     // 랜덤 정렬 중이면 섞인 순서 그대로 이어서 재생된다.
                     val videos = shown.filter { it.kind == MediaKind.VIDEO }
                     val subtitles = s.entries.filter { it.isSubtitle }
@@ -331,8 +415,32 @@ fun BrowserScreen(
                             MediaKind.OTHER -> Unit
                         }
                     }
-                    val like: (SmbEntry) -> Unit = { e -> toggleFavorite(context, server, e) }
+                    // 꾹 누르면 좋아요/이름 바꾸기/지우기 메뉴. 공유 목록 화면에서는 기존처럼 아무것도 안 한다.
+                    val like: (SmbEntry) -> Unit = { e ->
+                        if (server.share.isNotBlank()) {
+                            (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            actionTarget = e
+                        }
+                    }
+                    actionTarget?.let { e ->
+                        FileActionDialog(
+                            entry = e,
+                            onDismiss = { actionTarget = null },
+                            onLike = { actionTarget = null; toggleFavorite(context, server, e) },
+                            onRename = { actionTarget = null; renameTarget = e },
+                            onDelete = { actionTarget = null; deleteTarget = e },
+                        )
+                    }
+                    renameTarget?.let { e ->
+                        RenameDialog(entry = e, onDismiss = { renameTarget = null }, onConfirm = { doRename(e, it) })
+                    }
+                    deleteTarget?.let { e ->
+                        DeleteDialog(entry = e, onDismiss = { deleteTarget = null }, onConfirm = { doDelete(e) })
+                    }
                     Column(Modifier.fillMaxSize()) {
+                        if (working) {
+                            androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                        }
                         shuffleProgress?.let { msg ->
                             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -489,9 +597,9 @@ fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Uni
 
 val HEART = Color(0xFFFF4D6D)
 
-/** 사진·영상만 좋아요를 누를 수 있다. 눌렀다는 걸 진동과 짧은 안내로 알려준다. */
+/** 사진·영상·폴더만 좋아요를 누를 수 있다. 눌렀다는 걸 진동과 짧은 안내로 알려준다. */
 fun toggleFavorite(context: Context, server: ServerConfig, e: SmbEntry) {
-    if (e.kind != MediaKind.VIDEO && e.kind != MediaKind.IMAGE) return
+    if (e.kind == MediaKind.OTHER) return
     val on = Favorites.toggle(server, e)
     (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     Toast.makeText(context, if (on) "♥ 좋아요" else "좋아요 취소", Toast.LENGTH_SHORT).show()
