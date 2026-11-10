@@ -597,9 +597,9 @@ fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Uni
 
 val HEART = Color(0xFFFF4D6D)
 
-/** 사진·영상만 좋아요를 누를 수 있다. 눌렀다는 걸 진동과 짧은 안내로 알려준다. */
+/** 사진·영상·폴더만 좋아요를 누를 수 있다. 눌렀다는 걸 진동과 짧은 안내로 알려준다. */
 fun toggleFavorite(context: Context, server: ServerConfig, e: SmbEntry) {
-    if (e.kind != MediaKind.VIDEO && e.kind != MediaKind.IMAGE) return
+    if (e.kind == MediaKind.OTHER) return
     val on = Favorites.toggle(server, e)
     (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     Toast.makeText(context, if (on) "♥ 좋아요" else "좋아요 취소", Toast.LENGTH_SHORT).show()

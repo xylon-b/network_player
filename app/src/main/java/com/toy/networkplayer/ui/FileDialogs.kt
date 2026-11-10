@@ -46,7 +46,7 @@ fun FileActionDialog(
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val canLike = entry.kind == MediaKind.VIDEO || entry.kind == MediaKind.IMAGE
+    val canLike = entry.kind != MediaKind.OTHER
     val liked = Favorites.isFavorite(entry)
     val itemColors = ListItemDefaults.colors(containerColor = Color.Transparent)
     AlertDialog(

@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
                             onBack = { pop() },
                             onOpenImage = { server, images, index -> push(Screen.Photos(server, images, index)) },
                             onOpenVideo = { server, videos, index -> push(Screen.Player(server, videos, index, emptyList())) },
+                            onOpenFolder = { server, folder -> push(Screen.Browse(server, folder.path)) },
                             memory = top.memory,
                         )
                         is Screen.Browse -> BrowserScreen(
