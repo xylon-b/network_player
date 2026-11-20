@@ -7,6 +7,10 @@ import androidx.compose.material.icons.filled.Favorite
 import com.toy.networkplayer.data.Favorites
 import android.app.Activity
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import android.content.Context
@@ -59,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -142,11 +147,16 @@ fun PlayerScreen(
     val lastSaved = remember { SavedPosition() }
     var videoAspect by remember { mutableFloatStateOf(16f / 9f) }
     var brightness by remember { mutableFloatStateOf(-1f) }
+    // 두 손가락 확대/축소. 영상이 바뀌면 원래대로.
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var zoomPan by remember { mutableStateOf(Offset.Zero) }
+    var screenSize by remember { mutableStateOf(IntSize.Zero) }
     var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()) }
     var hud by remember { mutableStateOf<String?>(null) }
     var hudAt by remember { mutableLongStateOf(0L) }
 
-    val libVlc = remember { LibVLC(context, arrayListOf("--network-caching=1500", "--audio-time-stretch")) }
+    // --no-avcodec-corrupted: 앞 화면 정보가 없어 깨진(회색 블럭) 화면은 그리지 않고 건너뛴다(소프트웨어 디코딩).
+    val libVlc = remember { LibVLC(context, arrayListOf("--network-caching=1500", "--audio-time-stretch", "--no-avcodec-corrupted")) }
     val player = remember { MediaPlayer(libVlc) }
     // 멈추기/새 영상 넣기/해제는 길게 걸릴 수 있어서 화면 스레드가 아닌 전용 스레드 하나에서 차례로 한다.
     val engine = remember { Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-engine") } }
@@ -163,6 +173,19 @@ fun PlayerScreen(
     // 새 영상이 실제로 그려지기 전까지 화면을 검게 덮어 이전 영상 잔상/깨진 첫 화면을 숨긴다.
     var switching by remember { mutableStateOf(true) }
     val load = remember { PlayerLoad() }
+
+    // 화면 꾸미기 설정
+    var hiddenItems by remember { mutableStateOf(PlayerPrefs.hiddenItems(prefs)) }
+    var controlAlign by remember { mutableStateOf(PlayerPrefs.controlAlign(prefs)) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    var brightnessMode by remember { mutableStateOf(PlayerPrefs.brightnessMode(prefs)) }
+    var fixedBrightness by remember { mutableFloatStateOf(PlayerPrefs.fixedBrightness(prefs)) }
+
+    // 무작위 재생: 목록 순서는 그대로 두고, 다음 영상만 아직 안 본 것 중에서 무작위로 고른다.
+    var shuffleOn by remember { mutableStateOf(PlayerPrefs.shufflePlay(prefs)) }
+    // 무작위로 넘어온 길. '이전'은 여기서 하나씩 되돌아간다.
+    val shuffleBack = remember { mutableStateListOf<Int>() }
+    val shufflePlayed = remember { mutableSetOf<Int>() }
 
     fun touch() {
         lastTouch = System.currentTimeMillis()
@@ -197,6 +220,58 @@ fun PlayerScreen(
         val on = Favorites.toggle(server, videos[index])
         showHud(if (on) "♥ 좋아요" else "좋아요 취소")
         touch()
+    }
+
+    val hasNext = index < videos.lastIndex || (shuffleOn && videos.size > 1)
+    val hasPrev = index > 0 || (shuffleOn && shuffleBack.isNotEmpty())
+
+    fun goNext(): Boolean {
+        if (shuffleOn && videos.size > 1) {
+            shufflePlayed += index
+            var pool = videos.indices.filter { it !in shufflePlayed }
+            if (pool.isEmpty()) {
+                // 한 바퀴 다 봤으면 처음부터 다시 섞는다(방금 본 것만 빼고).
+                shufflePlayed.clear()
+                pool = videos.indices.filter { it != index }
+            }
+            shuffleBack += index
+            index = pool.random()
+            return true
+        }
+        if (index < videos.lastIndex) {
+            index++
+            return true
+        }
+        return false
+    }
+
+    fun goPrev(): Boolean {
+        if (shuffleOn && shuffleBack.isNotEmpty()) {
+            index = shuffleBack.removeAt(shuffleBack.lastIndex)
+            return true
+        }
+        if (index > 0) {
+            index--
+            return true
+        }
+        return false
+    }
+
+    fun toggleShuffle() {
+        shuffleOn = !shuffleOn
+        PlayerPrefs.setShufflePlay(prefs, shuffleOn)
+        shuffleBack.clear()
+        shufflePlayed.clear()
+        showHud(if (shuffleOn) "무작위 재생 ON" else "무작위 재생 OFF")
+        touch()
+    }
+
+    /** 이 화면의 밝기만 바꾼다. -1이면 폰 밝기를 따른다. */
+    fun setWindowBrightness(v: Float) {
+        brightness = v
+        activity.window.attributes = activity.window.attributes.apply {
+            screenBrightness = if (v < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else v
+        }
     }
 
     fun clampTime(ms: Long) = if (length > 0) ms.coerceIn(0L, length) else ms.coerceAtLeast(0L)
@@ -264,6 +339,17 @@ fun PlayerScreen(
         }
     }
 
+    // 설정한 밝기 모드에 맞춰 시작 밝기를 정한다.
+    LaunchedEffect(Unit) {
+        val start = PlayerPrefs.startBrightness(prefs)
+        if (start > 0f) setWindowBrightness(start.coerceIn(0.01f, 1f))
+    }
+
+    LaunchedEffect(index) {
+        zoom = 1f
+        zoomPan = Offset.Zero
+    }
+
     LaunchedEffect(orientationMode) {
         activity.requestedOrientation = when (orientationMode) {
             1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -279,38 +365,47 @@ fun PlayerScreen(
                 MediaPlayer.Event.Playing -> {
                     playing = true
                     buffering = false
+                    if (!load.armed) return@setEventListener
                     error = null
-                    if (switching) load.sawPlaying = true
+                }
+                MediaPlayer.Event.Vout -> {
+                    if (!load.armed) return@setEventListener
+                    load.voutCount = e.voutCount
+                    if (e.voutCount > 0) {
+                        readVideoAspect(player)?.let { videoAspect = it }
+                        // 새 영상의 화면이 붙었고 시간도 흐르고 있으면 덮개를 걷는다.
+                        if (load.timeSeen) switching = false
+                    }
+                }
+                MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> { playing = false }
+                MediaPlayer.Event.TimeChanged -> {
+                    // 이전 영상에서 늦게 도착한 시간은 버린다.
+                    if (!load.armed) return@setEventListener
+                    load.timeSeen = true
                     // 영상마다 처음 재생될 때 한 번만 시청 횟수를 올린다.
                     if (countedIndex != index) {
                         countedIndex = index
                         WatchHistory.markPlayed(server, videos[index].path)
                     }
-                }
-                MediaPlayer.Event.Vout -> { readVideoAspect(player)?.let { videoAspect = it } }
-                MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> { playing = false }
-                MediaPlayer.Event.TimeChanged -> {
-                    // 이전 영상에서 늦게 도착한 시간은 버린다.
-                    if (switching && !load.sawPlaying) return@setEventListener
-                    // 새 영상의 시간이 흐르기 시작하면 첫 화면이 나온 것이니 덮개를 걷는다.
-                    switching = false
+                    // 시간만 흐르고 화면이 안 붙었으면 덮개를 그대로 둔다(이전 영상 잔상이 보이는 문제).
+                    // 소리만 있는 파일은 감시 루프가 덮개를 걷는다.
+                    if (load.voutCount > 0) switching = false
                     if (!dragging && !gestureSeeking) time = e.timeChanged
                     lastSaved.path = videos[index].path
                     lastSaved.positionMs = e.timeChanged
                 }
                 MediaPlayer.Event.LengthChanged -> {
+                    if (!load.armed) return@setEventListener
                     length = e.lengthChanged
                     WatchHistory.setDuration(server, videos[index].path, e.lengthChanged)
                 }
                 MediaPlayer.Event.Buffering -> { buffering = e.buffering < 100f }
                 MediaPlayer.Event.EndReached -> {
-                    if (index < videos.lastIndex) {
-                        index++
-                    } else {
-                        playing = false
-                    }
+                    if (!load.armed) return@setEventListener
+                    if (!goNext()) playing = false
                 }
                 MediaPlayer.Event.EncounteredError -> {
+                    if (!load.armed) return@setEventListener
                     if (!softwareFallback && decoder != DECODER_SW) {
                         // 하드웨어 디코더가 못 여는 영상이면 소프트웨어로 한 번 더 시도한다.
                         softwareFallback = true
@@ -327,6 +422,7 @@ fun PlayerScreen(
         }
         onDispose {
             lastSaved.path?.let { WatchHistory.setPosition(server, it, lastSaved.positionMs) }
+            load.released = true
             player.setEventListener(null)
             player.detachViews()
             // 네트워크가 느리면 멈추기가 오래 걸려 뒤로 가기가 굳을 수 있어서 뒤에서 정리한다.
@@ -340,7 +436,8 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(index, reloadKey) {
-        if (load.index != index) {
+        val newVideo = load.index != index
+        if (newVideo) {
             // 이전 영상의 위치를 남겨 둔다(바둑판의 진행 막대용).
             lastSaved.path?.let { WatchHistory.setPosition(server, it, lastSaved.positionMs) }
             load.index = index
@@ -350,27 +447,50 @@ fun PlayerScreen(
             time = 0L
             length = 0L
         }
+        val gen = ++load.gen
         switching = true
-        load.sawPlaying = false
+        load.armed = false
+        load.timeSeen = false
+        load.voutCount = 0
         buffering = true
         error = null
+        if (newVideo && load.started) {
+            // 이전 영상은 바로 멈추고, 연달아 넘기는 중이면 마지막에 고른 영상만 불러오도록 잠깐 기다린다.
+            if (!engine.isShutdown) engine.execute { if (!load.released) player.stop() }
+            delay(SWITCH_SETTLE_MS)
+        }
+        load.started = true
         val video = videos[index]
-        // libVLC의 SMB 모듈 대신, 앱 안의 로컬 HTTP 서버를 거쳐 smbj로 읽는다.
-        val media = Media(libVlc, LocalStreamServer.url(server, video.path))
-        applyDecoder(media, if (softwareFallback) DECODER_SW else decoder)
-        if (resumeAt > 0) media.addOption(":start-time=${resumeAt / 1000}")
+        val url = LocalStreamServer.url(server, video.path)
+        val mode = if (softwareFallback) DECODER_SW else decoder
+        val startAt = resumeAt
         // 같은 이름의 자막 파일(영상.smi, 영상.ko.srt 등)을 붙인다.
         val subs = subtitles
             .filter { it.baseName.equals(video.baseName, ignoreCase = true) || it.baseName.startsWith(video.baseName + ".", ignoreCase = true) }
             .map { LocalStreamServer.url(server, it.path) }
-        // 이전 영상을 완전히 멈춰 디코더와 화면을 놓아준 뒤에 새 영상을 넣는다.
-        // 다음 영상을 연달아 눌러도 순서대로 처리되도록 취소하지 않는다.
-        withContext(NonCancellable + engineDispatcher) {
-            player.stop()
-            player.setMedia(media)
-            media.release()
-            subs.forEachIndexed { i, uri -> player.addSlave(IMedia.Slave.Type.Subtitle, uri, i == 0) }
-            player.play()
+        // 1) 이전 영상을 완전히 멈춰 디코더와 화면을 놓아주고
+        // 2) 화면을 새로 연결해 이전 영상이 붙잡던 화면을 물려받지 않게 한 뒤
+        // 3) 새 영상을 넣는다. 도중에 다른 영상이 골라졌으면 남은 단계는 건너뛴다.
+        withContext(NonCancellable) {
+            withContext(engineDispatcher) { if (!load.released) player.stop() }
+            if (load.gen != gen || load.released) return@withContext
+            load.layout?.let {
+                player.detachViews()
+                player.attachViews(it, null, true, true)
+                player.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL)
+            }
+            withContext(engineDispatcher) {
+                if (load.gen != gen || load.released) return@withContext
+                // libVLC의 SMB 모듈 대신, 앱 안의 로컬 HTTP 서버를 거쳐 smbj로 읽는다.
+                val media = Media(libVlc, url)
+                applyDecoder(media, mode)
+                if (startAt > 0) media.addOption(":start-time=${startAt / 1000}")
+                player.setMedia(media)
+                media.release()
+                subs.forEachIndexed { i, uri -> player.addSlave(IMedia.Slave.Type.Subtitle, uri, i == 0) }
+                player.play()
+            }
+            if (load.gen == gen) load.armed = true
         }
         applySpeed()
         touch()
@@ -383,8 +503,35 @@ fun PlayerScreen(
         var lastTime = -1L
         var stuckSince = 0L
         var counting = false
+        var noVoutSince = 0L
         while (true) {
             delay(WATCHDOG_TICK_MS)
+            // 소리는 나는데 새 영상의 화면이 끝내 안 붙는 경우(빠르게 넘길 때 생기던 잔상+소리만 재생).
+            if (load.armed && load.timeSeen && playing && !buffering) {
+                if (player.videoTracksCount == 0) {
+                    // 소리만 있는 파일
+                    if (switching) switching = false
+                } else if (load.voutCount == 0) {
+                    val wall = System.currentTimeMillis()
+                    if (noVoutSince == 0L) {
+                        noVoutSince = wall
+                    } else if (wall - noVoutSince >= NO_VOUT_MS) {
+                        if (recoveries < MAX_RECOVERIES) {
+                            recoveries++
+                            if (recoveries >= 2 && decoder != DECODER_SW) softwareFallback = true
+                            showHud("화면이 안 나와서 다시 불러왔어요")
+                            reload(player.time)
+                        } else {
+                            error = "영상 화면을 띄우지 못했어요. 옵션에서 디코더를 바꿔 보세요"
+                        }
+                        break
+                    }
+                } else {
+                    noVoutSince = 0L
+                }
+            } else {
+                noVoutSince = 0L
+            }
             if (switching || !playing || buffering || gestureSeeking || dragging) {
                 shownBase = -1
                 lastTime = -1L
@@ -440,8 +587,8 @@ fun PlayerScreen(
     }
 
     // 재생 중에 손을 안 대면 제어바를 숨긴다. 옵션 패널이 열려 있으면 그대로 둔다.
-    LaunchedEffect(controlsVisible, lastTouch, playing, dragging, panelOpen) {
-        if (controlsVisible && playing && !dragging && !panelOpen) {
+    LaunchedEffect(controlsVisible, lastTouch, playing, dragging, panelOpen, settingsOpen) {
+        if (controlsVisible && playing && !dragging && !panelOpen && !settingsOpen) {
             delay(HIDE_DELAY_MS)
             controlsVisible = false
         }
@@ -485,9 +632,9 @@ fun PlayerScreen(
                 TapZone.LEFT, TapZone.RIGHT -> {
                     activity.window.decorView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                     if (zone == TapZone.LEFT) {
-                        if (index > 0) { index--; showHud("⏮ 이전 영상") } else showHud("첫 영상이에요")
+                        if (goPrev()) showHud("⏮ 이전 영상") else showHud("첫 영상이에요")
                     } else {
-                        if (index < videos.lastIndex) { index++; showHud("다음 영상 ⏭") } else showHud("마지막 영상이에요")
+                        if (goNext()) showHud(if (shuffleOn) "무작위 다음 영상 ⏭" else "다음 영상 ⏭") else showHud("마지막 영상이에요")
                     }
                 }
                 TapZone.CENTER -> {
@@ -543,8 +690,7 @@ fun PlayerScreen(
                         Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
                     }
                 }
-                brightness = (brightness + delta * 1.3f).coerceIn(0.01f, 1f)
-                window.attributes = window.attributes.apply { screenBrightness = brightness }
+                setWindowBrightness((brightness + delta * 1.3f).coerceIn(0.01f, 1f))
                 showHud("밝기 ${(brightness * 100).roundToInt()}%")
             } else {
                 volume = (volume + delta * maxVolume * 1.3f).coerceIn(0f, maxVolume.toFloat())
@@ -552,19 +698,53 @@ fun PlayerScreen(
                 showHud("볼륨 ${(volume / maxVolume * 100).roundToInt()}%")
             }
         },
-        onVerticalEnd = { hudAt = System.currentTimeMillis() },
+        onVerticalEnd = {
+            hudAt = System.currentTimeMillis()
+            // '마지막 밝기 기억'이면 이번에 맞춘 밝기를 다음 재생에도 쓴다.
+            if (brightnessMode == BrightnessMode.REMEMBER && brightness > 0f) PlayerPrefs.setLastBrightness(prefs, brightness)
+        },
+        onPinch = { factor, pan ->
+            zoom = (zoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
+            // 확대한 만큼만 옮길 수 있게 한다(화면 밖으로 영상이 빠지지 않게).
+            val maxX = (screenSize.width * (zoom - 1f) / 2f).coerceAtLeast(0f)
+            val maxY = (screenSize.height * (zoom - 1f) / 2f).coerceAtLeast(0f)
+            zoomPan = Offset(
+                (zoomPan.x + pan.x).coerceIn(-maxX, maxX),
+                (zoomPan.y + pan.y).coerceIn(-maxY, maxY),
+            )
+            hud = "${(zoom * 100).roundToInt()}%"
+            hudAt = Long.MAX_VALUE
+        },
+        onPinchEnd = {
+            // 100% 근처에서 놓으면 원래 크기로 딱 맞춘다.
+            if (zoom in 0.93f..1.07f) {
+                zoom = 1f
+                zoomPan = Offset.Zero
+            }
+            showHud(if (zoom == 1f) "원래 크기" else "${(zoom * 100).roundToInt()}%")
+        },
     )
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged { screenSize = it }) {
         AndroidView(
             // 회전을 위해 TextureView를 쓰고, 화면비는 영상 상자 크기로 직접 맞춘다(엔진은 상자를 꽉 채움).
             factory = { ctx ->
                 VLCVideoLayout(ctx).also {
+                    load.layout = it
                     player.attachViews(it, null, true, true)
                     player.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL)
                 }
             },
-            modifier = Modifier.fillMaxSize().clipToBounds().videoBox(SCALES[scaleIndex], videoAspect, rotation),
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds()
+                .graphicsLayer {
+                    scaleX = zoom
+                    scaleY = zoom
+                    translationX = zoomPan.x
+                    translationY = zoomPan.y
+                }
+                .videoBox(SCALES[scaleIndex], videoAspect, rotation),
         )
         if (switching) Box(Modifier.fillMaxSize().background(Color.Black))
 
@@ -622,12 +802,13 @@ fun PlayerScreen(
                     playing = playing,
                     time = if (dragging) dragValue.toLong() else time,
                     length = length,
-                    hasPrev = index > 0,
-                    hasNext = index < videos.lastIndex,
+                    hasPrev = hasPrev,
+                    hasNext = hasNext,
+                    align = controlAlign,
                     onPlayPause = { togglePlay(); touch() },
                     onSkip = { delta -> seekTo(time + delta); touch() },
-                    onPrev = { index--; touch() },
-                    onNext = { index++; touch() },
+                    onPrev = { goPrev(); touch() },
+                    onNext = { goNext(); touch() },
                     onDrag = { v ->
                         dragging = true
                         dragValue = v
@@ -694,8 +875,38 @@ fun PlayerScreen(
                 onOrientation = { cycleOrientation() },
                 decoderLabel = if (softwareFallback) "SW(자동)" else DECODERS_SHORT[decoder],
                 onDecoder = { cycleDecoder() },
+                shuffleOn = shuffleOn,
+                onShuffle = { toggleShuffle() },
+                hidden = hiddenItems,
+                onSettings = { panelOpen = false; settingsOpen = true; touch() },
             ),
         )
+
+        if (settingsOpen) {
+            PlayerSettingsDialog(
+                align = controlAlign,
+                onAlign = { controlAlign = it; PlayerPrefs.setControlAlign(prefs, it) },
+                hidden = hiddenItems,
+                onHiddenChange = { hiddenItems = it; PlayerPrefs.setHiddenItems(prefs, it) },
+                brightnessMode = brightnessMode,
+                onBrightnessMode = { m ->
+                    brightnessMode = m
+                    PlayerPrefs.setBrightnessMode(prefs, m)
+                    when (m) {
+                        BrightnessMode.FIXED -> setWindowBrightness(fixedBrightness)
+                        BrightnessMode.SYSTEM -> setWindowBrightness(-1f)
+                        BrightnessMode.REMEMBER -> if (brightness > 0f) PlayerPrefs.setLastBrightness(prefs, brightness)
+                    }
+                },
+                fixedBrightness = fixedBrightness,
+                onFixedBrightness = { v ->
+                    fixedBrightness = v
+                    PlayerPrefs.setFixedBrightness(prefs, v)
+                    setWindowBrightness(v)
+                },
+                onDismiss = { settingsOpen = false; touch() },
+            )
+        }
     }
 }
 
@@ -709,6 +920,12 @@ private const val WATCHDOG_TICK_MS = 1500L
 private const val TIME_STALL_MS = 8000L
 private const val FRAME_STALL_MS = 4000L
 private const val MAX_RECOVERIES = 3
+// 시간은 흐르는데 영상 화면이 이만큼 안 붙으면 다시 불러온다.
+private const val NO_VOUT_MS = 2500L
+// 다음/이전을 연달아 누를 때 중간 영상들은 열지 않고 건너뛰기 위한 대기 시간.
+private const val SWITCH_SETTLE_MS = 300L
+private const val MIN_ZOOM = 0.5f
+private const val MAX_ZOOM = 4f
 
 private const val DECODER_SAFE = 0
 private const val DECODER_FAST = 1
@@ -736,7 +953,15 @@ private fun applyDecoder(media: Media, mode: Int) {
 
 private class PlayerLoad {
     var index = -1
-    var sawPlaying = false
+    var started = false
+    /** 영상을 넣을 때마다 올라가는 번호. 늦게 끝난 이전 요청이 새 요청을 덮지 않게 한다. */
+    @Volatile var gen = 0
+    /** 지금 넣은 영상의 이벤트만 받는 중인지. 그 전에 온 이벤트는 이전 영상의 것이다. */
+    var armed = false
+    var timeSeen = false
+    var voutCount = 0
+    @Volatile var released = false
+    var layout: VLCVideoLayout? = null
 }
 
 private class SavedPosition {
@@ -838,6 +1063,7 @@ private fun BottomBar(
     length: Long,
     hasPrev: Boolean,
     hasNext: Boolean,
+    align: ControlAlign,
     onPlayPause: () -> Unit,
     onSkip: (Long) -> Unit,
     onPrev: () -> Unit,
@@ -872,7 +1098,11 @@ private fun BottomBar(
         }
         Row(
             Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
+            horizontalArrangement = when (align) {
+                ControlAlign.START -> Arrangement.Start
+                ControlAlign.CENTER -> Arrangement.Center
+                ControlAlign.END -> Arrangement.End
+            },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onPrev, enabled = hasPrev) { Icon(Icons.Default.SkipPrevious, "이전", tint = barTint(hasPrev)) }

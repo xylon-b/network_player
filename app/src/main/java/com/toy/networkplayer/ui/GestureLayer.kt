@@ -2,6 +2,9 @@ package com.toy.networkplayer.ui
 
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
@@ -34,6 +37,9 @@ class GestureCallbacks(
     /** 이번 이벤트의 세로 이동량. 위로 올리면 양수, 화면 높이 기준 비율. */
     val onVertical: (leftSide: Boolean, delta: Float) -> Unit,
     val onVerticalEnd: () -> Unit,
+    /** 두 손가락 핀치. zoom은 이번 이벤트의 배율 변화, pan은 이동량(px). */
+    val onPinch: (zoom: Float, pan: Offset) -> Unit,
+    val onPinchEnd: () -> Unit,
 )
 
 /** 더블탭의 두 번째 탭을 이만큼 누르고 있으면 배속으로 본다. */
@@ -48,6 +54,26 @@ fun GestureLayer(locked: Boolean, callbacks: GestureCallbacks, modifier: Modifie
     Box(
         modifier
             .fillMaxSize()
+            // 두 손가락이 닿으면 핀치로 보고, 다른 제스처(탭/탐색/밝기)가 반응하지 않도록 먼저 가져간다.
+            .pointerInput(locked) {
+                if (locked) return@pointerInput
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var pinching = false
+                    do {
+                        val e = awaitPointerEvent(PointerEventPass.Initial)
+                        if (e.changes.count { it.pressed } >= 2) {
+                            pinching = true
+                            cb.onPinch(e.calculateZoom(), e.calculatePan())
+                            e.changes.forEach { it.consume() }
+                        } else if (pinching) {
+                            // 핀치 후 남은 한 손가락이 탐색으로 바뀌지 않게 한다.
+                            e.changes.forEach { it.consume() }
+                        }
+                    } while (e.changes.any { it.pressed })
+                    if (pinching) cb.onPinchEnd()
+                }
+            }
             .pointerInput(locked) {
                 fun zoneOf(o: Offset): TapZone {
                     val third = size.width / 3f
