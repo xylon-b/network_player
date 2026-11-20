@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -16,12 +17,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 /** 플로팅 메뉴에 넣을 수 있는 버튼들. 순서대로 3개씩 줄을 채운다. */
 enum class PanelItem(val key: String, val label: String) {
@@ -40,12 +43,18 @@ enum class PanelItem(val key: String, val label: String) {
     SHUFFLE("shuffle", "무작위 재생 ON/OFF"),
 }
 
+/** 재생 화면 밝기를 어떻게 정할지. */
+enum class BrightnessMode(val label: String) { REMEMBER("마지막 밝기 기억"), FIXED("고정 밝기"), SYSTEM("폰 밝기 따르기") }
+
 /** 하단 제어버튼(이전, 10초, 재생, 10초, 다음)을 어디에 모을지. */
 enum class ControlAlign(val label: String) { START("왼쪽"), CENTER("가운데"), END("오른쪽") }
 
 private const val KEY_HIDDEN = "panel_hidden"
 private const val KEY_ALIGN = "control_align"
 private const val KEY_SHUFFLE = "shuffle_play"
+private const val KEY_BRIGHT_MODE = "brightness_mode"
+private const val KEY_BRIGHT_LAST = "brightness_last"
+private const val KEY_BRIGHT_FIXED = "brightness_fixed"
 
 object PlayerPrefs {
     fun hiddenItems(prefs: SharedPreferences): Set<PanelItem> {
@@ -64,6 +73,33 @@ object PlayerPrefs {
         prefs.edit().putInt(KEY_ALIGN, align.ordinal).apply()
     }
 
+    fun brightnessMode(prefs: SharedPreferences): BrightnessMode =
+        BrightnessMode.entries.getOrElse(prefs.getInt(KEY_BRIGHT_MODE, 0)) { BrightnessMode.REMEMBER }
+
+    fun setBrightnessMode(prefs: SharedPreferences, mode: BrightnessMode) {
+        prefs.edit().putInt(KEY_BRIGHT_MODE, mode.ordinal).apply()
+    }
+
+    /** 마지막으로 맞춘 밝기(0.01..1). 없으면 -1. */
+    fun lastBrightness(prefs: SharedPreferences) = prefs.getFloat(KEY_BRIGHT_LAST, -1f)
+
+    fun setLastBrightness(prefs: SharedPreferences, v: Float) {
+        prefs.edit().putFloat(KEY_BRIGHT_LAST, v).apply()
+    }
+
+    fun fixedBrightness(prefs: SharedPreferences) = prefs.getFloat(KEY_BRIGHT_FIXED, 1f)
+
+    fun setFixedBrightness(prefs: SharedPreferences, v: Float) {
+        prefs.edit().putFloat(KEY_BRIGHT_FIXED, v).apply()
+    }
+
+    /** 재생 화면을 열 때 적용할 밝기. -1이면 폰 밝기 그대로. */
+    fun startBrightness(prefs: SharedPreferences): Float = when (brightnessMode(prefs)) {
+        BrightnessMode.REMEMBER -> lastBrightness(prefs)
+        BrightnessMode.FIXED -> fixedBrightness(prefs)
+        BrightnessMode.SYSTEM -> -1f
+    }
+
     fun shufflePlay(prefs: SharedPreferences) = prefs.getBoolean(KEY_SHUFFLE, false)
 
     fun setShufflePlay(prefs: SharedPreferences, on: Boolean) {
@@ -79,6 +115,10 @@ fun PlayerSettingsDialog(
     onAlign: (ControlAlign) -> Unit,
     hidden: Set<PanelItem>,
     onHiddenChange: (Set<PanelItem>) -> Unit,
+    brightnessMode: BrightnessMode,
+    onBrightnessMode: (BrightnessMode) -> Unit,
+    fixedBrightness: Float,
+    onFixedBrightness: (Float) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -98,6 +138,32 @@ fun PlayerSettingsDialog(
                     ControlAlign.entries.forEach { a ->
                         FilterChip(selected = a == align, onClick = { onAlign(a) }, label = { Text(a.label) })
                     }
+                }
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("재생 화면 밝기", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    BrightnessMode.entries.forEach { m ->
+                        FilterChip(selected = m == brightnessMode, onClick = { onBrightnessMode(m) }, label = { Text(m.label) })
+                    }
+                }
+                Text(
+                    when (brightnessMode) {
+                        BrightnessMode.REMEMBER -> "왼쪽 위아래로 밀어 맞춘 밝기를 다음에도 그대로 써요."
+                        BrightnessMode.FIXED -> "재생할 때마다 이 밝기로 시작해요: ${(fixedBrightness * 100).roundToInt()}%"
+                        BrightnessMode.SYSTEM -> "폰에 설정된 밝기로 시작해요."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (brightnessMode == BrightnessMode.FIXED) {
+                    Slider(
+                        value = fixedBrightness,
+                        onValueChange = { onFixedBrightness((it * 20).roundToInt() / 20f) },
+                        valueRange = 0.05f..1f,
+                    )
                 }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

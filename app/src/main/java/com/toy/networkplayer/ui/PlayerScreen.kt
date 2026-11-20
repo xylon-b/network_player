@@ -7,6 +7,10 @@ import androidx.compose.material.icons.filled.Favorite
 import com.toy.networkplayer.data.Favorites
 import android.app.Activity
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import android.content.Context
@@ -143,11 +147,16 @@ fun PlayerScreen(
     val lastSaved = remember { SavedPosition() }
     var videoAspect by remember { mutableFloatStateOf(16f / 9f) }
     var brightness by remember { mutableFloatStateOf(-1f) }
+    // 두 손가락 확대/축소. 영상이 바뀌면 원래대로.
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var zoomPan by remember { mutableStateOf(Offset.Zero) }
+    var screenSize by remember { mutableStateOf(IntSize.Zero) }
     var volume by remember { mutableFloatStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()) }
     var hud by remember { mutableStateOf<String?>(null) }
     var hudAt by remember { mutableLongStateOf(0L) }
 
-    val libVlc = remember { LibVLC(context, arrayListOf("--network-caching=1500", "--audio-time-stretch")) }
+    // --no-avcodec-corrupted: 앞 화면 정보가 없어 깨진(회색 블럭) 화면은 그리지 않고 건너뛴다(소프트웨어 디코딩).
+    val libVlc = remember { LibVLC(context, arrayListOf("--network-caching=1500", "--audio-time-stretch", "--no-avcodec-corrupted")) }
     val player = remember { MediaPlayer(libVlc) }
     // 멈추기/새 영상 넣기/해제는 길게 걸릴 수 있어서 화면 스레드가 아닌 전용 스레드 하나에서 차례로 한다.
     val engine = remember { Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-engine") } }
@@ -169,6 +178,8 @@ fun PlayerScreen(
     var hiddenItems by remember { mutableStateOf(PlayerPrefs.hiddenItems(prefs)) }
     var controlAlign by remember { mutableStateOf(PlayerPrefs.controlAlign(prefs)) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var brightnessMode by remember { mutableStateOf(PlayerPrefs.brightnessMode(prefs)) }
+    var fixedBrightness by remember { mutableFloatStateOf(PlayerPrefs.fixedBrightness(prefs)) }
 
     // 무작위 재생: 목록 순서는 그대로 두고, 다음 영상만 아직 안 본 것 중에서 무작위로 고른다.
     var shuffleOn by remember { mutableStateOf(PlayerPrefs.shufflePlay(prefs)) }
@@ -255,6 +266,14 @@ fun PlayerScreen(
         touch()
     }
 
+    /** 이 화면의 밝기만 바꾼다. -1이면 폰 밝기를 따른다. */
+    fun setWindowBrightness(v: Float) {
+        brightness = v
+        activity.window.attributes = activity.window.attributes.apply {
+            screenBrightness = if (v < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else v
+        }
+    }
+
     fun clampTime(ms: Long) = if (length > 0) ms.coerceIn(0L, length) else ms.coerceAtLeast(0L)
 
     fun reload(atMs: Long) {
@@ -318,6 +337,17 @@ fun PlayerScreen(
             }
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
+    }
+
+    // 설정한 밝기 모드에 맞춰 시작 밝기를 정한다.
+    LaunchedEffect(Unit) {
+        val start = PlayerPrefs.startBrightness(prefs)
+        if (start > 0f) setWindowBrightness(start.coerceIn(0.01f, 1f))
+    }
+
+    LaunchedEffect(index) {
+        zoom = 1f
+        zoomPan = Offset.Zero
     }
 
     LaunchedEffect(orientationMode) {
@@ -660,8 +690,7 @@ fun PlayerScreen(
                         Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
                     }
                 }
-                brightness = (brightness + delta * 1.3f).coerceIn(0.01f, 1f)
-                window.attributes = window.attributes.apply { screenBrightness = brightness }
+                setWindowBrightness((brightness + delta * 1.3f).coerceIn(0.01f, 1f))
                 showHud("밝기 ${(brightness * 100).roundToInt()}%")
             } else {
                 volume = (volume + delta * maxVolume * 1.3f).coerceIn(0f, maxVolume.toFloat())
@@ -669,10 +698,34 @@ fun PlayerScreen(
                 showHud("볼륨 ${(volume / maxVolume * 100).roundToInt()}%")
             }
         },
-        onVerticalEnd = { hudAt = System.currentTimeMillis() },
+        onVerticalEnd = {
+            hudAt = System.currentTimeMillis()
+            // '마지막 밝기 기억'이면 이번에 맞춘 밝기를 다음 재생에도 쓴다.
+            if (brightnessMode == BrightnessMode.REMEMBER && brightness > 0f) PlayerPrefs.setLastBrightness(prefs, brightness)
+        },
+        onPinch = { factor, pan ->
+            zoom = (zoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
+            // 확대한 만큼만 옮길 수 있게 한다(화면 밖으로 영상이 빠지지 않게).
+            val maxX = (screenSize.width * (zoom - 1f) / 2f).coerceAtLeast(0f)
+            val maxY = (screenSize.height * (zoom - 1f) / 2f).coerceAtLeast(0f)
+            zoomPan = Offset(
+                (zoomPan.x + pan.x).coerceIn(-maxX, maxX),
+                (zoomPan.y + pan.y).coerceIn(-maxY, maxY),
+            )
+            hud = "${(zoom * 100).roundToInt()}%"
+            hudAt = Long.MAX_VALUE
+        },
+        onPinchEnd = {
+            // 100% 근처에서 놓으면 원래 크기로 딱 맞춘다.
+            if (zoom in 0.93f..1.07f) {
+                zoom = 1f
+                zoomPan = Offset.Zero
+            }
+            showHud(if (zoom == 1f) "원래 크기" else "${(zoom * 100).roundToInt()}%")
+        },
     )
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(Color.Black).onSizeChanged { screenSize = it }) {
         AndroidView(
             // 회전을 위해 TextureView를 쓰고, 화면비는 영상 상자 크기로 직접 맞춘다(엔진은 상자를 꽉 채움).
             factory = { ctx ->
@@ -682,7 +735,16 @@ fun PlayerScreen(
                     player.setVideoScale(MediaPlayer.ScaleType.SURFACE_FILL)
                 }
             },
-            modifier = Modifier.fillMaxSize().clipToBounds().videoBox(SCALES[scaleIndex], videoAspect, rotation),
+            modifier = Modifier
+                .fillMaxSize()
+                .clipToBounds()
+                .graphicsLayer {
+                    scaleX = zoom
+                    scaleY = zoom
+                    translationX = zoomPan.x
+                    translationY = zoomPan.y
+                }
+                .videoBox(SCALES[scaleIndex], videoAspect, rotation),
         )
         if (switching) Box(Modifier.fillMaxSize().background(Color.Black))
 
@@ -826,6 +888,22 @@ fun PlayerScreen(
                 onAlign = { controlAlign = it; PlayerPrefs.setControlAlign(prefs, it) },
                 hidden = hiddenItems,
                 onHiddenChange = { hiddenItems = it; PlayerPrefs.setHiddenItems(prefs, it) },
+                brightnessMode = brightnessMode,
+                onBrightnessMode = { m ->
+                    brightnessMode = m
+                    PlayerPrefs.setBrightnessMode(prefs, m)
+                    when (m) {
+                        BrightnessMode.FIXED -> setWindowBrightness(fixedBrightness)
+                        BrightnessMode.SYSTEM -> setWindowBrightness(-1f)
+                        BrightnessMode.REMEMBER -> if (brightness > 0f) PlayerPrefs.setLastBrightness(prefs, brightness)
+                    }
+                },
+                fixedBrightness = fixedBrightness,
+                onFixedBrightness = { v ->
+                    fixedBrightness = v
+                    PlayerPrefs.setFixedBrightness(prefs, v)
+                    setWindowBrightness(v)
+                },
                 onDismiss = { settingsOpen = false; touch() },
             )
         }
@@ -846,6 +924,8 @@ private const val MAX_RECOVERIES = 3
 private const val NO_VOUT_MS = 2500L
 // 다음/이전을 연달아 누를 때 중간 영상들은 열지 않고 건너뛰기 위한 대기 시간.
 private const val SWITCH_SETTLE_MS = 300L
+private const val MIN_ZOOM = 0.5f
+private const val MAX_ZOOM = 4f
 
 private const val DECODER_SAFE = 0
 private const val DECODER_FAST = 1
