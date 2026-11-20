@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 108dp 캔버스, 가운데 66dp 안에 그린다: 폴더 안에 재생 버튼(뚫린 모양) + 아래 네트워크 점 세 개.
+     한 색 path라서 테마 아이콘(monochrome)으로도 그대로 쓴다. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M33,36 L47,36 L51,40 L75,40 Q78,40 78,43 L78,68 Q78,71 75,71 L33,71 Q30,71 30,68 L30,39 Q30,36 33,36 Z M48,46 L48,65 L64,55.5 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M42,79 m-2.5,0 a2.5,2.5 0,1 0,5 0 a2.5,2.5 0,1 0,-5 0 M54,79 m-2.5,0 a2.5,2.5 0,1 0,5 0 a2.5,2.5 0,1 0,-5 0 M66,79 m-2.5,0 a2.5,2.5 0,1 0,5 0 a2.5,2.5 0,1 0,-5 0" />
+</vector>

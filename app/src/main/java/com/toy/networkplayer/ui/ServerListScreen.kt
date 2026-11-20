@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -50,7 +51,12 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServerListScreen(store: ServerStore, onOpen: (ServerConfig) -> Unit, onOpenFavorites: () -> Unit) {
+fun ServerListScreen(
+    store: ServerStore,
+    onOpen: (ServerConfig) -> Unit,
+    onOpenFavorites: () -> Unit,
+    onOpenAbout: () -> Unit,
+) {
     var servers by remember { mutableStateOf(store.load()) }
     var editing by remember { mutableStateOf<ServerConfig?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -64,7 +70,10 @@ fun ServerListScreen(store: ServerStore, onOpen: (ServerConfig) -> Unit, onOpenF
         topBar = {
             TopAppBar(
                 title = { Text("공유폴더") },
-                actions = { IconButton(onClick = onOpenFavorites) { Icon(Icons.Default.Favorite, "즐겨찾기") } },
+                actions = {
+                    IconButton(onClick = onOpenFavorites) { Icon(Icons.Default.Favorite, "즐겨찾기") }
+                    IconButton(onClick = onOpenAbout) { Icon(Icons.Default.Info, "앱 정보") }
+                },
             )
         },
         floatingActionButton = {
