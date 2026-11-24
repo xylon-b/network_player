@@ -47,7 +47,7 @@ enum class PanelItem(val key: String, val label: String) {
 enum class BrightnessMode(val label: String) { REMEMBER("마지막 밝기 기억"), FIXED("고정 밝기"), SYSTEM("폰 밝기 따르기") }
 
 /** 하단 제어버튼(이전, 10초, 재생, 10초, 다음)을 어디에 모을지. */
-enum class ControlAlign(val label: String) { START("왼쪽"), CENTER("가운데"), END("오른쪽") }
+enum class ControlAlign(val label: String) { START("왼쪽"), CENTER("가운데"), END("오른쪽"), FLOAT("플로팅(자유 이동)") }
 
 private const val KEY_HIDDEN = "panel_hidden"
 private const val KEY_ALIGN = "control_align"
@@ -132,12 +132,19 @@ fun PlayerSettingsDialog(
             ) {
                 Text("하단 제어버튼 위치", style = MaterialTheme.typography.titleSmall)
                 Row(
-                    Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     ControlAlign.entries.forEach { a ->
                         FilterChip(selected = a == align, onClick = { onAlign(a) }, label = { Text(a.label) })
                     }
+                }
+                if (align == ControlAlign.FLOAT) {
+                    Text(
+                        "제어버튼 왼쪽 손잡이(⠿)를 끌어서 원하는 곳에 두세요. 위치는 기억돼요.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("재생 화면 밝기", style = MaterialTheme.typography.titleSmall)

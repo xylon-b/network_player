@@ -7,6 +7,13 @@ import androidx.compose.material.icons.filled.Favorite
 import com.toy.networkplayer.data.Favorites
 import android.app.Activity
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
@@ -823,6 +830,19 @@ fun PlayerScreen(
                     },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
+                if (controlAlign == ControlAlign.FLOAT) {
+                    FloatingControlBar(
+                        prefs = prefs,
+                        playing = playing,
+                        hasPrev = hasPrev,
+                        hasNext = hasNext,
+                        onPlayPause = { togglePlay(); touch() },
+                        onSkip = { delta -> seekTo(time + delta); touch() },
+                        onPrev = { goPrev(); touch() },
+                        onNext = { goNext(); touch() },
+                        onMoved = { touch() },
+                    )
+                }
             }
         }
 
@@ -1096,31 +1116,104 @@ private fun BottomBar(
             )
             Text(formatTime(length), color = Color.White)
         }
+        // 플로팅이면 버튼은 따로 떠 있고, 여기엔 탐색 막대만 남긴다.
+        if (align != ControlAlign.FLOAT) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = when (align) {
+                    ControlAlign.START -> Arrangement.Start
+                    ControlAlign.END -> Arrangement.End
+                    else -> Arrangement.Center
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ControlButtons(playing, hasPrev, hasNext, onPlayPause, onSkip, onPrev, onNext)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ControlButtons(
+    playing: Boolean,
+    hasPrev: Boolean,
+    hasNext: Boolean,
+    onPlayPause: () -> Unit,
+    onSkip: (Long) -> Unit,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    gap: Dp = 12.dp,
+) {
+    IconButton(onClick = onPrev, enabled = hasPrev) { Icon(Icons.Default.SkipPrevious, "이전", tint = barTint(hasPrev)) }
+    Spacer(Modifier.width(gap))
+    IconButton(onClick = { onSkip(-SKIP_MS) }) { Icon(Icons.Default.Replay10, "10초 뒤로", tint = Color.White) }
+    Spacer(Modifier.width(gap))
+    IconButton(onClick = onPlayPause, modifier = Modifier.size(56.dp)) {
+        Icon(
+            if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+            if (playing) "일시정지" else "재생",
+            tint = Color.White,
+            modifier = Modifier.size(44.dp),
+        )
+    }
+    Spacer(Modifier.width(gap))
+    IconButton(onClick = { onSkip(SKIP_MS) }) { Icon(Icons.Default.Forward10, "10초 앞으로", tint = Color.White) }
+    Spacer(Modifier.width(gap))
+    IconButton(onClick = onNext, enabled = hasNext) { Icon(Icons.Default.SkipNext, "다음", tint = barTint(hasNext)) }
+}
+
+/**
+ * 화면 위에 떠 있는 제어버튼. 왼쪽 손잡이를 끌어 옮기고, 위치는 화면 비율로 저장한다.
+ */
+@Composable
+private fun FloatingControlBar(
+    prefs: android.content.SharedPreferences,
+    playing: Boolean,
+    hasPrev: Boolean,
+    hasNext: Boolean,
+    onPlayPause: () -> Unit,
+    onSkip: (Long) -> Unit,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onMoved: () -> Unit,
+) {
+    // 기본은 화면 아래쪽 가운데(탐색 막대 바로 위).
+    var fx by remember { mutableFloatStateOf(prefs.getFloat("ctrl_x", 0.5f)) }
+    var fy by remember { mutableFloatStateOf(prefs.getFloat("ctrl_y", 0.72f)) }
+    var barSize by remember { mutableStateOf(IntSize.Zero) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val w = constraints.maxWidth.toFloat()
+        val h = constraints.maxHeight.toFloat()
+        val x = (fx * w - barSize.width / 2f).coerceIn(0f, (w - barSize.width).coerceAtLeast(0f))
+        val y = (fy * h - barSize.height / 2f).coerceIn(0f, (h - barSize.height).coerceAtLeast(0f))
         Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = when (align) {
-                ControlAlign.START -> Arrangement.Start
-                ControlAlign.CENTER -> Arrangement.Center
-                ControlAlign.END -> Arrangement.End
-            },
+            Modifier
+                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                .onSizeChanged { barSize = it }
+                .background(Color(0xCC202020), RoundedCornerShape(36.dp))
+                .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(36.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onPrev, enabled = hasPrev) { Icon(Icons.Default.SkipPrevious, "이전", tint = barTint(hasPrev)) }
-            Spacer(Modifier.width(12.dp))
-            IconButton(onClick = { onSkip(-SKIP_MS) }) { Icon(Icons.Default.Replay10, "10초 뒤로", tint = Color.White) }
-            Spacer(Modifier.width(12.dp))
-            IconButton(onClick = onPlayPause, modifier = Modifier.size(56.dp)) {
-                Icon(
-                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    if (playing) "일시정지" else "재생",
-                    tint = Color.White,
-                    modifier = Modifier.size(44.dp),
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            IconButton(onClick = { onSkip(SKIP_MS) }) { Icon(Icons.Default.Forward10, "10초 앞으로", tint = Color.White) }
-            Spacer(Modifier.width(12.dp))
-            IconButton(onClick = onNext, enabled = hasNext) { Icon(Icons.Default.SkipNext, "다음", tint = barTint(hasNext)) }
+            Icon(
+                Icons.Default.DragIndicator,
+                "옮기기",
+                tint = Color(0xAAFFFFFF),
+                modifier = Modifier
+                    .size(40.dp)
+                    .pointerInput(w, h) {
+                        detectDragGestures(
+                            onDragEnd = { prefs.edit().putFloat("ctrl_x", fx).putFloat("ctrl_y", fy).apply() },
+                        ) { change, amount ->
+                            change.consume()
+                            fx = (fx + amount.x / w).coerceIn(0f, 1f)
+                            fy = (fy + amount.y / h).coerceIn(0f, 1f)
+                            onMoved()
+                        }
+                    }
+                    .padding(8.dp),
+            )
+            ControlButtons(playing, hasPrev, hasNext, onPlayPause, onSkip, onPrev, onNext, gap = 2.dp)
         }
     }
 }
