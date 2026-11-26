@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Rotate90DegreesCw
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Tune
@@ -74,6 +76,10 @@ class FloatingActions(
     val onOrientation: () -> Unit,
     val decoderLabel: String,
     val onDecoder: () -> Unit,
+    val shuffleOn: Boolean,
+    val onShuffle: () -> Unit,
+    val hidden: Set<PanelItem>,
+    val onSettings: () -> Unit,
 )
 
 /**
@@ -142,39 +148,55 @@ fun FloatingOptions(
 
 @Composable
 private fun Panel(actions: FloatingActions, modifier: Modifier = Modifier) {
+    // 설정에서 숨긴 버튼은 빼고, 설정 버튼(null)은 항상 마지막에 둔다.
+    val items: List<PanelItem?> = PanelItem.entries.filter { it !in actions.hidden } + listOf(null)
     Column(
         modifier
             .background(Color(0xE6202020), RoundedCornerShape(20.dp))
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PanelButton(Icons.Default.Replay10, "10초 뒤로", actions.onBack10)
-            PanelButton(if (actions.playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (actions.playing) "일시정지" else "재생", actions.onPlayPause)
-            PanelButton(Icons.Default.Forward10, "10초 앞으로", actions.onForward10)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PanelButton(Icons.Default.Speed, actions.speedLabel, actions.onSpeed)
-            PanelButton(Icons.Default.AspectRatio, actions.scaleLabel, actions.onScale)
-            PanelButton(Icons.Default.Lock, "잠금", actions.onLock)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PanelButton(Icons.Default.Subtitles, "자막", actions.onSubtitle)
-            PanelButton(Icons.Default.Audiotrack, "음성", actions.onAudio)
-            PanelButton(Icons.Default.Rotate90DegreesCw, "회전", actions.onRotate)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            PanelButton(
-                if (actions.liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                "좋아요",
-                actions.onLike,
-                tint = if (actions.liked) HEART else Color.White,
-            )
-            PanelButton(Icons.Default.ScreenRotation, actions.orientationLabel, actions.onOrientation)
-            PanelButton(Icons.Default.Memory, actions.decoderLabel, actions.onDecoder)
+        items.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                row.forEach { item ->
+                    if (item == null) PanelButton(Icons.Default.Settings, "설정", actions.onSettings)
+                    else ItemButton(item, actions)
+                }
+            }
         }
     }
 }
+
+@Composable
+private fun ItemButton(item: PanelItem, a: FloatingActions) {
+    when (item) {
+        PanelItem.BACK10 -> PanelButton(Icons.Default.Replay10, "10초 뒤로", a.onBack10)
+        PanelItem.PLAY -> PanelButton(if (a.playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (a.playing) "일시정지" else "재생", a.onPlayPause)
+        PanelItem.FORWARD10 -> PanelButton(Icons.Default.Forward10, "10초 앞으로", a.onForward10)
+        PanelItem.SPEED -> PanelButton(Icons.Default.Speed, a.speedLabel, a.onSpeed)
+        PanelItem.SCALE -> PanelButton(Icons.Default.AspectRatio, a.scaleLabel, a.onScale)
+        PanelItem.LOCK -> PanelButton(Icons.Default.Lock, "잠금", a.onLock)
+        PanelItem.SUBTITLE -> PanelButton(Icons.Default.Subtitles, "자막", a.onSubtitle)
+        PanelItem.AUDIO -> PanelButton(Icons.Default.Audiotrack, "음성", a.onAudio)
+        PanelItem.ROTATE -> PanelButton(Icons.Default.Rotate90DegreesCw, "회전", a.onRotate)
+        PanelItem.LIKE -> PanelButton(
+            if (a.liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+            "좋아요",
+            a.onLike,
+            tint = if (a.liked) HEART else Color.White,
+        )
+        PanelItem.ORIENTATION -> PanelButton(Icons.Default.ScreenRotation, a.orientationLabel, a.onOrientation)
+        PanelItem.DECODER -> PanelButton(Icons.Default.Memory, a.decoderLabel, a.onDecoder)
+        PanelItem.SHUFFLE -> PanelButton(
+            Icons.Default.Shuffle,
+            if (a.shuffleOn) "무작위 ON" else "무작위 OFF",
+            a.onShuffle,
+            tint = if (a.shuffleOn) SHUFFLE_ON else Color.White,
+        )
+    }
+}
+
+private val SHUFFLE_ON = Color(0xFF4FC3F7)
 
 @Composable
 private fun PanelButton(icon: ImageVector, label: String, onClick: () -> Unit, tint: Color = Color.White) {
