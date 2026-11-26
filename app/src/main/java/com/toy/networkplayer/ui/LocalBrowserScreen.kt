@@ -412,7 +412,7 @@ fun LocalBrowserScreen(
                                 LazyColumn(Modifier.fillMaxSize(), state = rememberListState(memory.scroll)) {
                                     items(shown, key = { it.path }) { e ->
                                         ListItem(
-                                            modifier = Modifier.combinedClickable(onLongClick = { longPress(e) }, selected = selection?.let { e.path in it }) { open(e) },
+                                            modifier = Modifier.combinedClickable(onLongClick = { longPress(e) }) { open(e) },
                                             leadingContent = { Icon(iconOf(e), null, tint = if (e.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) },
                                             trailingContent = when {
                                                 selection != null -> { { SelectMark(e.path in selection.orEmpty()) } }
@@ -441,7 +441,7 @@ fun LocalBrowserScreen(
                                     verticalArrangement = Arrangement.spacedBy(14.dp),
                                 ) {
                                     items(shown, key = { it.path }) { e ->
-                                        Tile(server, e, compact = columns >= 4, onClick = { open(e) }, onLongClick = { longPress(e) })
+                                        Tile(server, e, compact = columns >= 4, onClick = { open(e) }, onLongClick = { longPress(e) }, selected = selection?.let { e.path in it })
                                     }
                                 }
                             }
