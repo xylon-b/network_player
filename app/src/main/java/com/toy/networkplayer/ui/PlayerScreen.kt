@@ -7,13 +7,7 @@ import androidx.compose.material.icons.filled.Favorite
 import com.toy.networkplayer.data.Favorites
 import android.app.Activity
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.offset
-import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
@@ -831,16 +825,30 @@ fun PlayerScreen(
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
                 if (controlAlign == ControlAlign.FLOAT) {
-                    FloatingControlBar(
+                    ControlDial(
                         prefs = prefs,
                         playing = playing,
+                        time = if (dragging) dragValue.toLong() else time,
+                        length = length,
                         hasPrev = hasPrev,
                         hasNext = hasNext,
                         onPlayPause = { togglePlay(); touch() },
-                        onSkip = { delta -> seekTo(time + delta); touch() },
+                        onSkip = { delta -> skip(delta); touch() },
                         onPrev = { goPrev(); touch() },
                         onNext = { goNext(); touch() },
-                        onMoved = { touch() },
+                        onSeek = { v ->
+                            dragging = true
+                            dragValue = v
+                            // 돌리는 동안 영상도 따라오도록 바로 이동시킨다.
+                            if (!switching) player.setTime(v.toLong(), true)
+                        },
+                        onSeekEnd = {
+                            seekTo(dragValue.toLong())
+                            dragging = false
+                            touch()
+                        },
+                        onTouch = { touch() },
+                        skipMs = SKIP_MS,
                     )
                 }
             }
@@ -1160,62 +1168,6 @@ private fun ControlButtons(
     IconButton(onClick = { onSkip(SKIP_MS) }) { Icon(Icons.Default.Forward10, "10초 앞으로", tint = Color.White) }
     Spacer(Modifier.width(gap))
     IconButton(onClick = onNext, enabled = hasNext) { Icon(Icons.Default.SkipNext, "다음", tint = barTint(hasNext)) }
-}
-
-/**
- * 화면 위에 떠 있는 제어버튼. 왼쪽 손잡이를 끌어 옮기고, 위치는 화면 비율로 저장한다.
- */
-@Composable
-private fun FloatingControlBar(
-    prefs: android.content.SharedPreferences,
-    playing: Boolean,
-    hasPrev: Boolean,
-    hasNext: Boolean,
-    onPlayPause: () -> Unit,
-    onSkip: (Long) -> Unit,
-    onPrev: () -> Unit,
-    onNext: () -> Unit,
-    onMoved: () -> Unit,
-) {
-    // 기본은 화면 아래쪽 가운데(탐색 막대 바로 위).
-    var fx by remember { mutableFloatStateOf(prefs.getFloat("ctrl_x", 0.5f)) }
-    var fy by remember { mutableFloatStateOf(prefs.getFloat("ctrl_y", 0.72f)) }
-    var barSize by remember { mutableStateOf(IntSize.Zero) }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val w = constraints.maxWidth.toFloat()
-        val h = constraints.maxHeight.toFloat()
-        val x = (fx * w - barSize.width / 2f).coerceIn(0f, (w - barSize.width).coerceAtLeast(0f))
-        val y = (fy * h - barSize.height / 2f).coerceIn(0f, (h - barSize.height).coerceAtLeast(0f))
-        Row(
-            Modifier
-                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
-                .onSizeChanged { barSize = it }
-                .background(Color(0xCC202020), RoundedCornerShape(36.dp))
-                .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(36.dp))
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Default.DragIndicator,
-                "옮기기",
-                tint = Color(0xAAFFFFFF),
-                modifier = Modifier
-                    .size(40.dp)
-                    .pointerInput(w, h) {
-                        detectDragGestures(
-                            onDragEnd = { prefs.edit().putFloat("ctrl_x", fx).putFloat("ctrl_y", fy).apply() },
-                        ) { change, amount ->
-                            change.consume()
-                            fx = (fx + amount.x / w).coerceIn(0f, 1f)
-                            fy = (fy + amount.y / h).coerceIn(0f, 1f)
-                            onMoved()
-                        }
-                    }
-                    .padding(8.dp),
-            )
-            ControlButtons(playing, hasPrev, hasNext, onPlayPause, onSkip, onPrev, onNext, gap = 2.dp)
-        }
-    }
 }
 
 private fun barTint(enabled: Boolean) = if (enabled) Color.White else Color(0x55FFFFFF)
