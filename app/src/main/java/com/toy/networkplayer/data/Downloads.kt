@@ -13,7 +13,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.hierynomus.mssmb2.messages.SMB2ReadResponse
+import com.hierynomus.smbj.share.SmbPipelinedRead
 import java.io.File
+import java.util.concurrent.Future
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
@@ -57,7 +60,9 @@ object Downloads {
     @Volatile private var currentId = 0L
     private var worker: kotlinx.coroutines.Job? = null
 
-    private const val BUFFER = 1024 * 1024
+    /** 한꺼번에 미리 요청해 둘 데이터 양. */
+    private const val PIPELINE_BYTES = 8 * 1024 * 1024
+    private const val READ_TIMEOUT_MS = 60_000L
 
     /**
      * 파일이나 폴더를 대기열에 넣는다. 폴더면 안에 든 파일을 폴더 구조 그대로 받는다.
@@ -171,21 +176,46 @@ object Downloads {
             set(job.id) { it.copy(dest = target.absolutePath) }
             SmbRepository.openRead(job.server, job.path).use { file ->
                 val size = file.fileInformation.standardInformation.endOfFile
-                val buf = ByteArray(BUFFER)
+                // 읽기 요청을 여러 개 미리 보내 두고(파이프라인) 도착한 순서대로 쓴다.
+                // 요청 하나씩 기다리면 왕복 시간 동안 네트워크가 놀아서 속도가 절반 가까이 떨어진다.
+                val chunk = SmbPipelinedRead.chunkSize(file).coerceIn(64 * 1024, 8 * 1024 * 1024)
+                val depth = (PIPELINE_BYTES / chunk).coerceIn(2, 16)
+                val pending = ArrayDeque<Triple<Long, Int, Future<SMB2ReadResponse>>>()
+                var next = 0L
+                fun fill() {
+                    while (pending.size < depth && next < size) {
+                        val len = minOf(chunk.toLong(), size - next).toInt()
+                        pending.addLast(Triple(next, len, SmbPipelinedRead.request(file, next, len)))
+                        next += len
+                    }
+                }
                 var pos = 0L
                 var lastUi = 0L
                 var speedFrom = System.currentTimeMillis()
                 var speedBytes = 0L
                 var speed = 0L
                 FileOutputStream(tmp).use { out ->
-                    while (pos < size) {
+                    fill()
+                    while (pending.isNotEmpty()) {
                         kotlin.coroutines.coroutineContext.ensureActive()
-                        val want = minOf(BUFFER.toLong(), size - pos).toInt()
-                        val n = file.read(buf, pos, 0, want)
-                        if (n <= 0) break
-                        out.write(buf, 0, n)
-                        pos += n
-                        speedBytes += n
+                        val (offset, len, future) = pending.removeFirst()
+                        val data = SmbPipelinedRead.await(future, READ_TIMEOUT_MS)
+                        if (data.isEmpty()) break
+                        out.write(data)
+                        var got = data.size
+                        // 드물게 서버가 요청보다 적게 보내면 모자란 만큼 바로 이어서 읽는다.
+                        if (got < len) {
+                            val rest = ByteArray(len - got)
+                            while (got < len) {
+                                val n = file.read(rest, offset + got, 0, len - got)
+                                if (n <= 0) break
+                                out.write(rest, 0, n)
+                                got += n
+                            }
+                        }
+                        pos += got
+                        speedBytes += got
+                        fill()
                         val now = System.currentTimeMillis()
                         if (now - speedFrom >= 1000) {
                             speed = speedBytes * 1000 / (now - speedFrom)
@@ -198,6 +228,7 @@ object Downloads {
                             val sp = speed
                             set(job.id) { it.copy(done = p, total = size, speed = sp) }
                         }
+                        if (got < len) break
                     }
                 }
                 if (pos < size) throw IOException("파일을 끝까지 받지 못했어요")
