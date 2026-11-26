@@ -19,7 +19,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.collectAsState
+import com.toy.networkplayer.data.Downloads
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -55,8 +62,12 @@ fun ServerListScreen(
     store: ServerStore,
     onOpen: (ServerConfig) -> Unit,
     onOpenFavorites: () -> Unit,
-    onOpenAbout: () -> Unit,
+    onOpenLocal: () -> Unit,
+    onOpenDownloads: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
+    val downloads by Downloads.tasks.collectAsState()
+    val activeDownloads = downloads.count { it.active }
     var servers by remember { mutableStateOf(store.load()) }
     var editing by remember { mutableStateOf<ServerConfig?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -69,10 +80,15 @@ fun ServerListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("공유폴더") },
+                title = { Text("네트워크 플레이어") },
                 actions = {
                     IconButton(onClick = onOpenFavorites) { Icon(Icons.Default.Favorite, "즐겨찾기") }
-                    IconButton(onClick = onOpenAbout) { Icon(Icons.Default.Info, "앱 정보") }
+                    IconButton(onClick = onOpenDownloads) {
+                        BadgedBox(badge = { if (activeDownloads > 0) Badge { Text("$activeDownloads") } }) {
+                            Icon(Icons.Default.Download, "다운로드")
+                        }
+                    }
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, "설정") }
                 },
             )
         },
@@ -80,28 +96,46 @@ fun ServerListScreen(
             FloatingActionButton(onClick = { adding = true }) { Icon(Icons.Default.Add, "서버 추가") }
         },
     ) { padding ->
-        if (servers.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("+ 버튼을 눌러 윈도우 공유폴더를 추가하세요", style = MaterialTheme.typography.bodyLarge)
+        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            item(key = "local") {
+                ListItem(
+                    modifier = Modifier.clickable(onClick = onOpenLocal),
+                    leadingContent = { Icon(Icons.Default.PhoneAndroid, null, tint = MaterialTheme.colorScheme.primary) },
+                    headlineContent = { Text("내 폰") },
+                    supportingContent = { Text("휴대폰 저장공간 · 받은 영상 보기, 파일 정리") },
+                )
+                HorizontalDivider()
+                Text(
+                    "공유폴더",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+                )
             }
-        } else {
-            LazyColumn(Modifier.fillMaxSize().padding(padding)) {
-                items(servers, key = { it.id }) { s ->
-                    ListItem(
-                        modifier = Modifier.clickable { onOpen(s) },
-                        leadingContent = { Icon(Icons.Default.Computer, null) },
-                        headlineContent = { Text(s.displayName) },
-                        supportingContent = { Text("smb://${s.host}/${s.share}".trimEnd('/')) },
-                        trailingContent = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { editing = s }) { Icon(Icons.Default.Edit, "수정") }
-                                IconButton(onClick = { update(servers.filter { it.id != s.id }) }) {
-                                    Icon(Icons.Default.Delete, "삭제")
-                                }
-                            }
-                        },
+            if (servers.isEmpty()) {
+                item(key = "empty") {
+                    Text(
+                        "+ 버튼을 눌러 윈도우 공유폴더를 추가하세요",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
                     )
                 }
+            }
+            items(servers, key = { it.id }) { s ->
+                ListItem(
+                    modifier = Modifier.clickable { onOpen(s) },
+                    leadingContent = { Icon(Icons.Default.Computer, null) },
+                    headlineContent = { Text(s.displayName) },
+                    supportingContent = { Text("smb://${s.host}/${s.share}".trimEnd('/')) },
+                    trailingContent = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { editing = s }) { Icon(Icons.Default.Edit, "수정") }
+                            IconButton(onClick = { update(servers.filter { it.id != s.id }) }) {
+                                Icon(Icons.Default.Delete, "삭제")
+                            }
+                        }
+                    },
+                )
             }
         }
     }

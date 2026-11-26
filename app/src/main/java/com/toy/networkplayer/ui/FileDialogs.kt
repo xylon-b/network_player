@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -45,6 +47,8 @@ fun FileActionDialog(
     onLike: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onDownload: (() -> Unit)? = null,
+    onSelect: (() -> Unit)? = null,
 ) {
     val canLike = entry.kind == MediaKind.VIDEO || entry.kind == MediaKind.IMAGE
     val liked = Favorites.isFavorite(entry)
@@ -60,6 +64,22 @@ fun FileActionDialog(
                         modifier = Modifier.clickableRow(onLike),
                         leadingContent = { Icon(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = HEART) },
                         headlineContent = { Text(if (liked) "좋아요 취소" else "좋아요") },
+                    )
+                }
+                if (onSelect != null) {
+                    ListItem(
+                        colors = itemColors,
+                        modifier = Modifier.clickableRow(onSelect),
+                        leadingContent = { Icon(Icons.Default.CheckCircle, null) },
+                        headlineContent = { Text("여러 개 선택하기") },
+                    )
+                }
+                if (onDownload != null) {
+                    ListItem(
+                        colors = itemColors,
+                        modifier = Modifier.clickableRow(onDownload),
+                        leadingContent = { Icon(Icons.Default.Download, null) },
+                        headlineContent = { Text(if (entry.isDirectory) "폴더째 내 폰에 받기" else "내 폰에 받기") },
                     )
                 }
                 ListItem(
@@ -114,7 +134,7 @@ fun RenameDialog(entry: SmbEntry, onDismiss: () -> Unit, onConfirm: (String) -> 
 
 /** 지우기 전에 한 번 더 묻는다. PC에서도 사라지고 휴지통에도 안 남는다. */
 @Composable
-fun DeleteDialog(entry: SmbEntry, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+fun DeleteDialog(entry: SmbEntry, onDismiss: () -> Unit, onConfirm: () -> Unit, local: Boolean = false) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (entry.isDirectory) "폴더를 지울까요?" else "파일을 지울까요?") },
@@ -124,7 +144,7 @@ fun DeleteDialog(entry: SmbEntry, onDismiss: () -> Unit, onConfirm: () -> Unit) 
                     append(entry.name)
                     append("\n\n")
                     if (entry.isDirectory) append("폴더 안에 든 파일까지 전부 지워져요. ")
-                    append("PC 휴지통에도 남지 않아서 되돌릴 수 없어요.")
+                    append(if (local) "휴대폰에서 바로 지워져서 되돌릴 수 없어요." else "PC 휴지통에도 남지 않아서 되돌릴 수 없어요.")
                 },
             )
         },

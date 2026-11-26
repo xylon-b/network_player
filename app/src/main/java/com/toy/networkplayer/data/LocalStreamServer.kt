@@ -27,6 +27,8 @@ object LocalStreamServer {
 
     /** 재생 엔진에 넘길 주소. 경로 구분자 '\'는 '/'로 바꿔 각 조각을 인코딩한다. */
     fun url(server: ServerConfig, path: String): Uri {
+        // 휴대폰 안의 파일은 재생 엔진이 직접 연다.
+        if (server.isLocal) return Uri.fromFile(java.io.File(path))
         val port = ensureStarted()
         val token = server.id.ifBlank { "s" } + "-" + server.share.hashCode().toUInt().toString(16)
         servers[token] = server
