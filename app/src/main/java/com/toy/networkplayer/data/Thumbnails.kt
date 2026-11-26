@@ -110,27 +110,37 @@ object Thumbnails {
         dir?.listFiles()?.forEach { it.delete() }
     }
 
-    private suspend fun videoFrame(server: ServerConfig, entry: SmbEntry): Bitmap? = withContext(Dispatchers.IO) {
-        SmbRepository.openRead(server, entry.path).use { file ->
-            val size = file.fileInformation.standardInformation.endOfFile
-            val source = SmbDataSource(file, size)
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(source)
-                val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-                WatchHistory.setDuration(server, entry.path, durationMs)
-                // 첫 장면은 검은 화면인 경우가 많아서 조금 뒤 장면을 쓴다.
-                val atUs = (durationMs * 100L).coerceAtMost(30_000_000L)
-                // 가능하면 디코더가 처음부터 작은 크기로 뽑게 해서 큰 원본 프레임을 만들지 않는다.
-                val frame = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                    retriever.getScaledFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, SIZE, SIZE)
-                } else {
-                    retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                } ?: return@use null
-                scaleDown(frame)
-            } finally {
-                runCatching { retriever.release() }
+    /** 휴대폰 파일은 경로로, 공유폴더 파일은 SMB로 읽어서 retriever에 물린다. */
+    private fun <T> withRetriever(server: ServerConfig, entry: SmbEntry, block: (MediaMetadataRetriever) -> T): T {
+        val retriever = MediaMetadataRetriever()
+        try {
+            if (server.isLocal) {
+                retriever.setDataSource(entry.path)
+                return block(retriever)
             }
+            SmbRepository.openRead(server, entry.path).use { file ->
+                val size = file.fileInformation.standardInformation.endOfFile
+                retriever.setDataSource(SmbDataSource(file, size))
+                return block(retriever)
+            }
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    private suspend fun videoFrame(server: ServerConfig, entry: SmbEntry): Bitmap? = withContext(Dispatchers.IO) {
+        withRetriever(server, entry) { retriever ->
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            WatchHistory.setDuration(server, entry.path, durationMs)
+            // 첫 장면은 검은 화면인 경우가 많아서 조금 뒤 장면을 쓴다.
+            val atUs = (durationMs * 100L).coerceAtMost(30_000_000L)
+            // 가능하면 디코더가 처음부터 작은 크기로 뽑게 해서 큰 원본 프레임을 만들지 않는다.
+            val frame = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                retriever.getScaledFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, SIZE, SIZE)
+            } else {
+                retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            } ?: return@withRetriever null
+            scaleDown(frame)
         }
     }
 
@@ -138,15 +148,8 @@ object Thumbnails {
     suspend fun probeDuration(server: ServerConfig, entry: SmbEntry): Long = gate.withPermit {
         withContext(Dispatchers.IO) {
             runCatching {
-                SmbRepository.openRead(server, entry.path).use { file ->
-                    val size = file.fileInformation.standardInformation.endOfFile
-                    val retriever = MediaMetadataRetriever()
-                    try {
-                        retriever.setDataSource(SmbDataSource(file, size))
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-                    } finally {
-                        runCatching { retriever.release() }
-                    }
+                withRetriever(server, entry) { retriever ->
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                 }
             }.getOrDefault(0L).also { WatchHistory.setDuration(server, entry.path, it) }
         }

@@ -128,6 +128,7 @@ object SmbRepository {
         )
 
     suspend fun readBytes(server: ServerConfig, path: String): ByteArray = withContext(Dispatchers.IO) {
+        if (server.isLocal) return@withContext java.io.File(path).readBytes()
         share(server).openFile(
             path,
             EnumSet.of(AccessMask.GENERIC_READ),

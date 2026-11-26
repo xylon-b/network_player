@@ -89,7 +89,7 @@ object WatchHistory {
         records.keys.toList().forEach { k ->
             val moved = when {
                 k == oldKey -> newKey
-                old.isDirectory && k.startsWith(oldKey + "\\") -> newKey + k.substring(oldKey.length)
+                old.isDirectory && k.startsWith(oldKey + server.separator) -> newKey + k.substring(oldKey.length)
                 else -> null
             }
             if (moved != null) {
@@ -108,7 +108,7 @@ object WatchHistory {
 
     fun deleted(server: ServerConfig, entry: SmbEntry) {
         val k = key(server, entry.path)
-        val gone = records.keys.filter { it == k || (entry.isDirectory && it.startsWith(k + "\\")) }
+        val gone = records.keys.filter { it == k || (entry.isDirectory && it.startsWith(k + server.separator)) }
         gone.forEach { records.remove(it) }
         if (gone.isNotEmpty()) save()
         if (!entry.isDirectory && durations.remove(nameKey(entry.path)) != null) saveDurations()

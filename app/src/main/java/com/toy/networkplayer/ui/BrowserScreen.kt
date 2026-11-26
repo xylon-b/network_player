@@ -120,7 +120,7 @@ enum class SortOrder(val label: String) {
     }
 }
 
-private val VIEW_OPTIONS = listOf(
+internal val VIEW_OPTIONS = listOf(
     5 to "아이콘 아주 작게 (5열)",
     4 to "아이콘 작게 (4열)",
     3 to "아이콘 보통 (3열)",
@@ -188,6 +188,7 @@ fun BrowserScreen(
     onOpenVideo: (videos: List<SmbEntry>, index: Int, subtitles: List<SmbEntry>) -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenDownloads: () -> Unit,
     memory: BrowseMemory = remember { BrowseMemory() },
 ) {
     // 이미 읽어 둔 목록이 있으면 다시 읽지 않고 바로 보여준다(돌아왔을 때 스크롤 위치 유지).
@@ -219,6 +220,7 @@ fun BrowserScreen(
         )
     }
     val scope = rememberCoroutineScope()
+    val startDownload = rememberDownloadStarter()
 
     fun runShuffle(all: List<SmbEntry>, options: ShuffleOptions) {
         shuffleOptions = options
@@ -362,6 +364,10 @@ fun BrowserScreen(
                             }
                             HorizontalDivider()
                             DropdownMenuItem(
+                                text = { Text("   다운로드 목록") },
+                                onClick = { menuOpen = false; onOpenDownloads() },
+                            )
+                            DropdownMenuItem(
                                 text = { Text("   썸네일 저장 비우기 (${Thumbnails.diskUsage() / (1024 * 1024)}MB)") },
                                 onClick = {
                                     Thumbnails.clearDisk()
@@ -429,6 +435,7 @@ fun BrowserScreen(
                             onLike = { actionTarget = null; toggleFavorite(context, server, e) },
                             onRename = { actionTarget = null; renameTarget = e },
                             onDelete = { actionTarget = null; deleteTarget = e },
+                            onDownload = { actionTarget = null; startDownload(server, e) },
                         )
                     }
                     renameTarget?.let { e ->
@@ -488,7 +495,7 @@ fun BrowserScreen(
     }
 }
 
-private fun iconOf(e: SmbEntry): ImageVector = when (e.kind) {
+internal fun iconOf(e: SmbEntry): ImageVector = when (e.kind) {
     MediaKind.FOLDER -> Icons.Default.Folder
     MediaKind.VIDEO -> Icons.Default.Movie
     MediaKind.IMAGE -> Icons.Default.Image
