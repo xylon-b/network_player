@@ -63,6 +63,9 @@ object WatchHistory {
     }
 
     /** 길이를 이미 확인했는지(읽기 실패도 확인한 것으로 친다). */
+    /** 알고 있는 영상 길이(ms). 모르면 0. */
+    fun duration(entry: SmbEntry): Long = durations[nameKey(entry.path)] ?: 0L
+
     fun hasDuration(entry: SmbEntry): Boolean = durations.containsKey(nameKey(entry.path))
 
     fun markPlayed(server: ServerConfig, path: String) = update(key(server, path)) {

@@ -71,7 +71,7 @@ import java.io.File
  * 저장공간 허용이 없으면 먼저 안내하고, 알림 허용은 처음 한 번만 묻는다(거절해도 다운로드는 된다).
  */
 @Composable
-fun rememberDownloadStarter(): (ServerConfig, SmbEntry) -> Unit {
+fun rememberDownloadStarter(): (ServerConfig, List<SmbEntry>) -> Unit {
     val context = LocalContext.current
     var needAccess by remember { mutableStateOf(false) }
     val notifyLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -96,7 +96,7 @@ fun rememberDownloadStarter(): (ServerConfig, SmbEntry) -> Unit {
         )
     }
 
-    return { server, entry ->
+    return { server, entries ->
         if (!LocalFiles.hasAccess(context)) {
             needAccess = true
         } else {
@@ -108,7 +108,7 @@ fun rememberDownloadStarter(): (ServerConfig, SmbEntry) -> Unit {
                     notifyLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
-            Downloads.start(context, server, entry)
+            Downloads.start(context, server, entries)
         }
     }
 }

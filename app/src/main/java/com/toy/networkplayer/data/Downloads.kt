@@ -91,16 +91,23 @@ object Downloads {
     }
 
     /** 화면을 벗어나도 폴더 훑기가 끊기지 않도록 앱 쪽에서 대기열에 넣고, 결과를 짧은 안내로 알려준다. */
-    fun start(context: Context, server: ServerConfig, entry: SmbEntry) {
+    fun start(context: Context, server: ServerConfig, entries: List<SmbEntry>) {
+        if (entries.isEmpty()) return
         val app = context.applicationContext
-        if (entry.isDirectory) android.widget.Toast.makeText(app, "폴더 안의 파일을 확인하는 중…", android.widget.Toast.LENGTH_SHORT).show()
+        if (entries.any { it.isDirectory }) android.widget.Toast.makeText(app, "폴더 안의 파일을 확인하는 중…", android.widget.Toast.LENGTH_SHORT).show()
         scope.launch {
-            val r = runCatching { enqueue(app, server, entry) }
+            var added = 0
+            var error: Throwable? = null
+            entries.forEach { e ->
+                runCatching { enqueue(app, server, e) }.onSuccess { added += it }.onFailure { error = it }
+            }
             withContext(Dispatchers.Main) {
-                val msg = r.fold(
-                    { n -> if (n == 0) "받을 파일이 없어요" else if (entry.isDirectory) "${n}개 파일을 받기 시작해요" else "다운로드를 시작해요" },
-                    { "다운로드를 시작하지 못했어요: ${it.describe()}" },
-                )
+                val msg = when {
+                    added == 0 && error != null -> "다운로드를 시작하지 못했어요: ${error!!.describe()}"
+                    added == 0 -> "받을 파일이 없어요"
+                    added == 1 -> "다운로드를 시작해요"
+                    else -> "${added}개 파일을 받기 시작해요"
+                }
                 android.widget.Toast.makeText(app, msg, android.widget.Toast.LENGTH_SHORT).show()
             }
         }

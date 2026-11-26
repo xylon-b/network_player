@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
@@ -100,7 +101,7 @@ class LocalMemory {
     val scroll = ScrollMemory()
 
     /** 옮길 폴더를 고르고 돌아왔을 때 처리할 이동. (옮길 항목, 옮길 폴더) */
-    var pendingMove: Pair<SmbEntry, String>? = null
+    var pendingMove: Pair<List<SmbEntry>, String>? = null
 }
 
 private sealed interface LocalState {
@@ -163,7 +164,7 @@ fun LocalBrowserScreen(
     onOpenFolder: (String) -> Unit,
     onOpenImage: (images: List<SmbEntry>, index: Int) -> Unit,
     onOpenVideo: (videos: List<SmbEntry>, index: Int, subtitles: List<SmbEntry>) -> Unit,
-    onPickMoveTarget: (entry: SmbEntry, start: String) -> Unit,
+    onPickMoveTarget: (entries: List<SmbEntry>, start: String) -> Unit,
 ) {
     val server = ServerConfig.LOCAL
     val context = LocalContext.current
@@ -179,6 +180,10 @@ fun LocalBrowserScreen(
     var deleteTarget by remember { mutableStateOf<SmbEntry?>(null) }
     var newFolder by remember { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
+    // 여러 개 선택 모드. null이면 선택 모드 아님. 값은 고른 항목의 경로.
+    var selection by remember(path) { mutableStateOf<Set<String>?>(null) }
+    var bulkDelete by remember { mutableStateOf(false) }
+    BackHandler(enabled = selection != null) { selection = null }
     val scope = rememberCoroutineScope()
 
     fun toast(msg: String, long: Boolean = false) =
@@ -225,14 +230,58 @@ fun LocalBrowserScreen(
         }
     }
 
+    fun selectedEntries(): List<SmbEntry> {
+        val keys = selection ?: return emptyList()
+        return current()?.filter { it.path in keys } ?: emptyList()
+    }
+
+    fun doBulkDelete() {
+        bulkDelete = false
+        val targets = selectedEntries()
+        selection = null
+        working = true
+        scope.launch {
+            var failed = 0
+            targets.forEach { e ->
+                runCatching { LocalFiles.delete(e) }
+                    .onSuccess { current()?.let { setEntries(it.filter { x -> x != e }) } }
+                    .onFailure { failed++ }
+            }
+            toast(if (failed == 0) "${targets.size}개를 지웠어요" else "${targets.size - failed}개 지움, ${failed}개는 못 지웠어요", failed > 0)
+            working = false
+        }
+    }
+
+    fun bulkLike() {
+        val media = selectedEntries().filter { it.kind == MediaKind.VIDEO || it.kind == MediaKind.IMAGE }
+        if (media.isEmpty()) {
+            toast("좋아요는 영상과 사진에만 할 수 있어요")
+            return
+        }
+        val allLiked = media.all { Favorites.isFavorite(it) }
+        media.filter { Favorites.isFavorite(it) == allLiked }.forEach { Favorites.toggle(server, it) }
+        toast(if (allLiked) "${media.size}개 좋아요 취소" else "♥ ${media.size}개 좋아요")
+        selection = null
+    }
+
     // 옮길 폴더를 고르고 돌아왔으면 옮긴다.
     LaunchedEffect(Unit) {
-        val (e, target) = memory.pendingMove ?: return@LaunchedEffect
+        val (targets, dir) = memory.pendingMove ?: return@LaunchedEffect
         memory.pendingMove = null
         working = true
-        runCatching { LocalFiles.move(e, target) }
-            .onSuccess { current()?.let { setEntries(it.filter { x -> x != e }) }; toast("${LocalFiles.pretty(target)}(으)로 옮겼어요") }
-            .onFailure { toast("못 옮겼어요: ${it.describe()}", true) }
+        var failed: Throwable? = null
+        var moved = 0
+        targets.forEach { e ->
+            runCatching { LocalFiles.move(e, dir) }
+                .onSuccess { moved++; if (it.path != e.path) current()?.let { list -> setEntries(list.filter { x -> x != e }) } }
+                .onFailure { failed = it }
+        }
+        val err = failed
+        when {
+            err == null -> toast("${LocalFiles.pretty(dir)}(으)로 ${if (targets.size > 1) "${moved}개를 " else ""}옮겼어요")
+            moved == 0 -> toast("못 옮겼어요: ${err.describe()}", true)
+            else -> toast("${moved}개 옮김, ${targets.size - moved}개는 못 옮겼어요: ${err.describe()}", true)
+        }
         working = false
     }
 
@@ -245,8 +294,31 @@ fun LocalBrowserScreen(
 
     val isRoot = path == LocalFiles.root.absolutePath
     Scaffold(
+        bottomBar = {
+            val sel = selection
+            if (sel != null) {
+                SelectionActionBar(
+                    enabled = sel.isNotEmpty(),
+                    actions = listOf(
+                        SelectionAction(Icons.Default.DriveFileMove, "옮기기") { val t = selectedEntries(); selection = null; onPickMoveTarget(t, path) },
+                        SelectionAction(Icons.Default.Share, "공유") { shareFiles(context, selectedEntries().filter { !it.isDirectory }) },
+                        SelectionAction(Icons.Default.Favorite, "좋아요") { bulkLike() },
+                        SelectionAction(Icons.Default.Delete, "지우기", danger = true) { bulkDelete = true },
+                    ),
+                )
+            }
+        },
         topBar = {
-            TopAppBar(
+            val sel = selection
+            if (sel != null) {
+                val all = current().orEmpty()
+                SelectionTopBar(
+                    count = sel.size,
+                    total = all.size,
+                    onClose = { selection = null },
+                    onSelectAll = { on -> selection = if (on) all.map { it.path }.toSet() else emptySet() },
+                )
+            } else TopAppBar(
                 title = {
                     Column {
                         Text(if (isRoot) "내 폰" else File(path).name, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -278,6 +350,10 @@ fun LocalBrowserScreen(
                                 )
                             }
                             HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("   여러 개 선택") },
+                                onClick = { menuOpen = false; selection = emptySet() },
+                            )
                             DropdownMenuItem(
                                 text = { Text(if (showHidden) "✓ 숨김 파일 보기" else "   숨김 파일 보기") },
                                 onClick = {
@@ -311,8 +387,11 @@ fun LocalBrowserScreen(
                         val images = shown.filter { it.kind == MediaKind.IMAGE }
                         val videos = shown.filter { it.kind == MediaKind.VIDEO }
                         val subtitles = s.entries.filter { it.isSubtitle }
+                        val toggle: (SmbEntry) -> Unit = { e ->
+                            selection = selection?.let { if (e.path in it) it - e.path else it + e.path }
+                        }
                         val open: (SmbEntry) -> Unit = { e ->
-                            when (e.kind) {
+                            if (selection != null) toggle(e) else when (e.kind) {
                                 MediaKind.FOLDER -> onOpenFolder(e.path)
                                 MediaKind.IMAGE -> onOpenImage(images, images.indexOf(e))
                                 MediaKind.VIDEO -> onOpenVideo(videos, videos.indexOf(e), subtitles)
@@ -320,8 +399,12 @@ fun LocalBrowserScreen(
                             }
                         }
                         val longPress: (SmbEntry) -> Unit = { e ->
-                            (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                            actionTarget = e
+                            if (selection != null) {
+                                toggle(e)
+                            } else {
+                                (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                actionTarget = e
+                            }
                         }
                         Column(Modifier.fillMaxSize()) {
                             if (working) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -329,15 +412,19 @@ fun LocalBrowserScreen(
                                 LazyColumn(Modifier.fillMaxSize(), state = rememberListState(memory.scroll)) {
                                     items(shown, key = { it.path }) { e ->
                                         ListItem(
-                                            modifier = Modifier.combinedClickable(onLongClick = { longPress(e) }) { open(e) },
+                                            modifier = Modifier.combinedClickable(onLongClick = { longPress(e) }, selected = selection?.let { e.path in it }) { open(e) },
                                             leadingContent = { Icon(iconOf(e), null, tint = if (e.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) },
-                                            trailingContent = if (Favorites.isFavorite(e)) { { Icon(Icons.Default.Favorite, "좋아요", tint = HEART) } } else null,
+                                            trailingContent = when {
+                                                selection != null -> { { SelectMark(e.path in selection.orEmpty()) } }
+                                                Favorites.isFavorite(e) -> { { Icon(Icons.Default.Favorite, "좋아요", tint = HEART) } }
+                                                else -> null
+                                            },
                                             headlineContent = { Text(e.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                                             supportingContent = {
                                                 Text(
                                                     buildString {
                                                         append(formatDate(e.modified))
-                                                        if (!e.isDirectory) append(" · ").append(formatSize(e.size))
+                                                        if (!e.isDirectory) append(" · ").append(sizeAndDuration(e))
                                                     },
                                                 )
                                             },
@@ -371,7 +458,8 @@ fun LocalBrowserScreen(
             onDismiss = { actionTarget = null },
             onLike = { actionTarget = null; toggleFavorite(context, server, e) },
             onRename = { actionTarget = null; renameTarget = e },
-            onMove = { actionTarget = null; onPickMoveTarget(e, path) },
+            onMove = { actionTarget = null; onPickMoveTarget(listOf(e), path) },
+            onSelect = { actionTarget = null; selection = setOf(e.path) },
             onShare = { actionTarget = null; shareFile(context, e) },
             onOpenWith = { actionTarget = null; openWithOtherApp(context, e) },
             onDelete = { actionTarget = null; deleteTarget = e },
@@ -379,6 +467,7 @@ fun LocalBrowserScreen(
     }
     renameTarget?.let { e -> RenameDialog(entry = e, onDismiss = { renameTarget = null }, onConfirm = { doRename(e, it) }) }
     deleteTarget?.let { e -> DeleteDialog(entry = e, onDismiss = { deleteTarget = null }, onConfirm = { doDelete(e) }, local = true) }
+    if (bulkDelete) BulkDeleteDialog(selection?.size ?: 0, local = true, onDismiss = { bulkDelete = false }, onConfirm = { doBulkDelete() })
     if (newFolder) NewFolderDialog(onDismiss = { newFolder = false }, onConfirm = { doCreate(it) })
 }
 
@@ -393,6 +482,7 @@ private fun LocalFileActionDialog(
     onShare: () -> Unit,
     onOpenWith: () -> Unit,
     onDelete: () -> Unit,
+    onSelect: () -> Unit,
 ) {
     val canLike = entry.kind == MediaKind.VIDEO || entry.kind == MediaKind.IMAGE
     val liked = Favorites.isFavorite(entry)
@@ -412,6 +502,7 @@ private fun LocalFileActionDialog(
         text = {
             Column {
                 if (canLike) Action(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, if (liked) "좋아요 취소" else "좋아요", HEART, onLike)
+                Action(Icons.Default.CheckCircle, "여러 개 선택하기", onClick = onSelect)
                 Action(Icons.Default.DriveFileRenameOutline, "이름 바꾸기", onClick = onRename)
                 Action(Icons.Default.DriveFileMove, "다른 폴더로 옮기기", onClick = onMove)
                 if (!entry.isDirectory) {
@@ -561,6 +652,22 @@ fun openWithOtherApp(context: Context, e: SmbEntry) {
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(context, "이 파일을 열 수 있는 앱이 없어요", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun shareFiles(context: Context, files: List<SmbEntry>) {
+    if (files.isEmpty()) {
+        Toast.makeText(context, "폴더는 공유할 수 없어요. 파일을 골라주세요", Toast.LENGTH_SHORT).show()
+        return
+    }
+    if (files.size == 1) return shareFile(context, files[0])
+    val uris = ArrayList(files.map { uriOf(context, it) })
+    val types = files.map { mimeOf(it) }.distinct()
+    val type = types.singleOrNull() ?: types.map { it.substringBefore('/') }.distinct().singleOrNull()?.let { "$it/*" } ?: "*/*"
+    val intent = Intent(Intent.ACTION_SEND_MULTIPLE)
+        .setType(type)
+        .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    runCatching { context.startActivity(Intent.createChooser(intent, "공유하기")) }
 }
 
 private fun shareFile(context: Context, e: SmbEntry) {

@@ -2,6 +2,12 @@
 
 package com.toy.networkplayer.ui
 
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Search
 import android.view.HapticFeedbackConstants
 import com.toy.networkplayer.data.Favorites
@@ -205,6 +211,10 @@ fun BrowserScreen(
     var renameTarget by remember { mutableStateOf<SmbEntry?>(null) }
     var deleteTarget by remember { mutableStateOf<SmbEntry?>(null) }
     var working by remember { mutableStateOf(false) }
+    // 여러 개 선택 모드. null이면 선택 모드가 아니고, 고른 항목의 selectKey 모음.
+    var selection by remember(server, path) { mutableStateOf<Set<String>?>(null) }
+    var bulkDelete by remember { mutableStateOf(false) }
+    BackHandler(enabled = selection != null) { selection = null }
 
     // 랜덤 정렬 결과. null이면 원래 순서.
     var shuffled by remember(server, path) { mutableStateOf(memory.shuffled) }
@@ -299,6 +309,41 @@ fun BrowserScreen(
         }
     }
 
+    fun selectedEntries(): List<SmbEntry> {
+        val keys = selection ?: return emptyList()
+        return (state as? LoadState.Loaded)?.entries?.filter { selectKey(it) in keys } ?: emptyList()
+    }
+
+    fun doBulkDelete() {
+        bulkDelete = false
+        val targets = selectedEntries()
+        selection = null
+        working = true
+        scope.launch {
+            var failed = 0
+            targets.forEach { e ->
+                runCatching { FileOps.delete(server, e) }
+                    .onSuccess { replaceEntry(e, null) }
+                    .onFailure { failed++ }
+            }
+            Toast.makeText(context, if (failed == 0) "${targets.size}개를 지웠어요" else "${targets.size - failed}개 지움, ${failed}개는 못 지웠어요", Toast.LENGTH_LONG).show()
+            working = false
+        }
+    }
+
+    fun bulkLike() {
+        val media = selectedEntries().filter { it.kind == MediaKind.VIDEO || it.kind == MediaKind.IMAGE }
+        if (media.isEmpty()) {
+            Toast.makeText(context, "좋아요는 영상과 사진에만 할 수 있어요", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // 전부 좋아요 상태면 모두 취소, 아니면 아직 안 누른 것만 좋아요.
+        val allLiked = media.all { Favorites.isFavorite(it) }
+        media.filter { Favorites.isFavorite(it) == allLiked }.forEach { Favorites.toggle(server, it) }
+        Toast.makeText(context, if (allLiked) "${media.size}개 좋아요 취소" else "♥ ${media.size}개 좋아요", Toast.LENGTH_SHORT).show()
+        selection = null
+    }
+
     LaunchedEffect(shuffled) { memory.shuffled = shuffled }
 
     LaunchedEffect(server, path, reload) {
@@ -315,8 +360,29 @@ fun BrowserScreen(
     }
 
     Scaffold(
+        bottomBar = {
+            if (selection != null) {
+                SelectionActionBar(
+                    enabled = selection!!.isNotEmpty(),
+                    actions = listOf(
+                        SelectionAction(Icons.Default.Download, "내 폰에 받기") { startDownload(server, selectedEntries()); selection = null },
+                        SelectionAction(Icons.Default.Favorite, "좋아요") { bulkLike() },
+                        SelectionAction(Icons.Default.Delete, "지우기", danger = true) { bulkDelete = true },
+                    ),
+                )
+            }
+        },
         topBar = {
-            TopAppBar(
+            val sel = selection
+            if (sel != null) {
+                val all = (state as? LoadState.Loaded)?.entries.orEmpty()
+                SelectionTopBar(
+                    count = sel.size,
+                    total = all.size,
+                    onClose = { selection = null },
+                    onSelectAll = { on -> selection = if (on) all.map { selectKey(it) }.toSet() else emptySet() },
+                )
+            } else TopAppBar(
                 title = {
                     Column {
                         Text(path.substringAfterLast('\\').ifEmpty { server.share.ifBlank { server.displayName } }, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -361,6 +427,13 @@ fun BrowserScreen(
                                         onClick = { setSort(o) },
                                     )
                                 }
+                            }
+                            if (server.share.isNotBlank()) {
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("   여러 개 선택") },
+                                    onClick = { menuOpen = false; selection = emptySet() },
+                                )
                             }
                             HorizontalDivider()
                             DropdownMenuItem(
@@ -413,8 +486,12 @@ fun BrowserScreen(
                     // 랜덤 정렬 중이면 섞인 순서 그대로 이어서 재생된다.
                     val videos = shown.filter { it.kind == MediaKind.VIDEO }
                     val subtitles = s.entries.filter { it.isSubtitle }
+                    val toggle: (SmbEntry) -> Unit = { e ->
+                        val k = selectKey(e)
+                        selection = selection?.let { if (k in it) it - k else it + k }
+                    }
                     val open: (SmbEntry) -> Unit = { e ->
-                        when (e.kind) {
+                        if (selection != null) toggle(e) else when (e.kind) {
                             MediaKind.FOLDER -> if (server.share.isBlank()) onOpenShare(e.name) else onOpenFolder(e)
                             MediaKind.IMAGE -> onOpenImage(images, images.indexOf(e))
                             MediaKind.VIDEO -> onOpenVideo(videos, videos.indexOf(e), subtitles)
@@ -423,7 +500,9 @@ fun BrowserScreen(
                     }
                     // 꾹 누르면 좋아요/이름 바꾸기/지우기 메뉴. 공유 목록 화면에서는 기존처럼 아무것도 안 한다.
                     val like: (SmbEntry) -> Unit = { e ->
-                        if (server.share.isNotBlank()) {
+                        if (selection != null) {
+                            toggle(e)
+                        } else if (server.share.isNotBlank()) {
                             (context as? android.app.Activity)?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                             actionTarget = e
                         }
@@ -435,7 +514,8 @@ fun BrowserScreen(
                             onLike = { actionTarget = null; toggleFavorite(context, server, e) },
                             onRename = { actionTarget = null; renameTarget = e },
                             onDelete = { actionTarget = null; deleteTarget = e },
-                            onDownload = { actionTarget = null; startDownload(server, e) },
+                            onDownload = { actionTarget = null; startDownload(server, listOf(e)) },
+                            onSelect = { actionTarget = null; selection = setOf(selectKey(e)) },
                         )
                     }
                     renameTarget?.let { e ->
@@ -443,6 +523,9 @@ fun BrowserScreen(
                     }
                     deleteTarget?.let { e ->
                         DeleteDialog(entry = e, onDismiss = { deleteTarget = null }, onConfirm = { doDelete(e) })
+                    }
+                    if (bulkDelete) {
+                        BulkDeleteDialog(selection?.size ?: 0, local = false, onDismiss = { bulkDelete = false }, onConfirm = { doBulkDelete() })
                     }
                     Column(Modifier.fillMaxSize()) {
                         if (working) {
@@ -465,12 +548,17 @@ fun BrowserScreen(
                         if (columns == 0) {
                             LazyColumn(Modifier.fillMaxSize(), state = rememberListState(memory.scroll)) {
                                 items(shown, key = { it.path + "|" + it.name }) { e ->
+                                    val sel = selection
                                     ListItem(
                                         modifier = Modifier.combinedClickable(onLongClick = { like(e) }) { open(e) },
                                         leadingContent = { Icon(iconOf(e), null) },
-                                        trailingContent = if (Favorites.isFavorite(e)) { { Icon(Icons.Default.Favorite, "좋아요", tint = HEART) } } else null,
+                                        trailingContent = when {
+                                            sel != null -> { { SelectMark(selectKey(e) in sel) } }
+                                            Favorites.isFavorite(e) -> { { Icon(Icons.Default.Favorite, "좋아요", tint = HEART) } }
+                                            else -> null
+                                        },
                                         headlineContent = { Text(e.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                                        supportingContent = if (e.isDirectory) null else { { Text(formatSize(e.size)) } },
+                                        supportingContent = if (e.isDirectory) null else { { Text(sizeAndDuration(e)) } },
                                     )
                                 }
                             }
@@ -484,7 +572,7 @@ fun BrowserScreen(
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                             ) {
                                 items(shown, key = { it.path + "|" + it.name }) { e ->
-                                    Tile(server, e, compact = columns >= 4, onClick = { open(e) }, onLongClick = { like(e) })
+                                    Tile(server, e, compact = columns >= 4, onClick = { open(e) }, onLongClick = { like(e) }, selected = selection?.let { selectKey(e) in it })
                                 }
                             }
                         }
@@ -546,11 +634,21 @@ private fun BoxScope.WatchedBar(server: ServerConfig, e: SmbEntry) {
 
 /** 1:1 정사각형 칸. 사진과 영상은 썸네일, 나머지는 아이콘. */
 @Composable
-fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+fun Tile(
+    server: ServerConfig,
+    e: SmbEntry,
+    compact: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    /** null이면 선택 모드가 아님. */
+    selected: Boolean? = null,
+) {
     val hasThumb = e.kind == MediaKind.IMAGE || e.kind == MediaKind.VIDEO
     val thumb by produceState(Thumbnails.cached(server, e), server, e.path) {
         if (value == null && hasThumb) value = Thumbnails.load(server, e)
     }
+    // 썸네일을 만들 때 영상 길이도 같이 기록되므로 썸네일이 생기면 다시 읽는다.
+    val durationMs = remember(e.path, thumb) { if (e.kind == MediaKind.VIDEO) WatchHistory.duration(e) else 0L }
     Column(Modifier.combinedClickable(onLongClick = onLongClick, onClick = onClick)) {
         Box(
             Modifier
@@ -571,6 +669,19 @@ fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Uni
                         tint = Color.White.copy(alpha = 0.85f),
                         modifier = Modifier.size(if (compact) 24.dp else 36.dp),
                     )
+                    if (durationMs > 0) {
+                        Text(
+                            formatDuration(durationMs),
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 4.dp, bottom = 8.dp)
+                                .background(Color(0x99000000), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
                 }
             } else {
                 Icon(
@@ -591,6 +702,10 @@ fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Uni
                         .size(if (compact) 16.dp else 22.dp),
                 )
             }
+            if (selected != null) {
+                if (selected) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)))
+                SelectMark(selected, Modifier.align(Alignment.TopEnd).padding(4.dp).size(if (compact) 20.dp else 26.dp))
+            }
         }
         Text(
             e.name,
@@ -599,6 +714,44 @@ fun Tile(server: ServerConfig, e: SmbEntry, compact: Boolean, onClick: () -> Uni
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 4.dp, start = 2.dp, end = 2.dp),
         )
+        if (!e.isDirectory && e.size > 0) {
+            Text(
+                formatSize(e.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier.padding(start = 2.dp, end = 2.dp),
+            )
+        }
+    }
+}
+
+/** 선택 모드에서 칸/줄 오른쪽 위에 보이는 동그란 체크. */
+@Composable
+fun SelectMark(selected: Boolean, modifier: Modifier = Modifier) {
+    Icon(
+        if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+        if (selected) "선택됨" else "선택 안 됨",
+        tint = if (selected) MaterialTheme.colorScheme.primary else Color.White,
+        modifier = modifier.background(Color(0x55000000), CircleShape),
+    )
+}
+
+/** 목록 보기의 보조 줄: "500MB · 42분" */
+fun sizeAndDuration(e: SmbEntry): String {
+    val d = if (e.kind == MediaKind.VIDEO) WatchHistory.duration(e) else 0L
+    return if (d > 0) formatSize(e.size) + " · " + formatDuration(d) else formatSize(e.size)
+}
+
+/** 영상 길이를 짧게: 45초, 12분, 1시간 5분. */
+fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    return when {
+        h > 0 -> if (m > 0) "${h}시간 ${m}분" else "${h}시간"
+        m > 0 -> "${m}분"
+        else -> "${totalSec}초"
     }
 }
 
@@ -612,13 +765,18 @@ fun toggleFavorite(context: Context, server: ServerConfig, e: SmbEntry) {
     Toast.makeText(context, if (on) "♥ 좋아요" else "좋아요 취소", Toast.LENGTH_SHORT).show()
 }
 
+/** 사람이 한눈에 보기 쉬운 용량: 1.1GB, 500MB, 820KB. */
 fun formatSize(bytes: Long): String {
-    val units = listOf("B", "KB", "MB", "GB", "TB")
-    var v = bytes.toDouble()
-    var i = 0
-    while (v >= 1024 && i < units.lastIndex) {
-        v /= 1024
-        i++
+    val kb = 1024.0
+    val mb = kb * 1024
+    val gb = mb * 1024
+    val tb = gb * 1024
+    fun oneDecimal(v: Double) = if (v >= 10) "%.0f".format(v) else "%.1f".format(v).removeSuffix(".0")
+    return when {
+        bytes >= tb -> oneDecimal(bytes / tb) + "TB"
+        bytes >= gb -> oneDecimal(bytes / gb) + "GB"
+        bytes >= mb -> "%.0f".format(bytes / mb) + "MB"
+        bytes >= kb -> "%.0f".format(bytes / kb) + "KB"
+        else -> "${bytes}B"
     }
-    return if (i == 0) "$bytes B" else "%.1f %s".format(v, units[i])
 }

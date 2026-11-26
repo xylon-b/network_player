@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
@@ -47,6 +48,7 @@ fun FileActionDialog(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onDownload: (() -> Unit)? = null,
+    onSelect: (() -> Unit)? = null,
 ) {
     val canLike = entry.kind == MediaKind.VIDEO || entry.kind == MediaKind.IMAGE
     val liked = Favorites.isFavorite(entry)
@@ -62,6 +64,14 @@ fun FileActionDialog(
                         modifier = Modifier.clickableRow(onLike),
                         leadingContent = { Icon(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, null, tint = HEART) },
                         headlineContent = { Text(if (liked) "좋아요 취소" else "좋아요") },
+                    )
+                }
+                if (onSelect != null) {
+                    ListItem(
+                        colors = itemColors,
+                        modifier = Modifier.clickableRow(onSelect),
+                        leadingContent = { Icon(Icons.Default.CheckCircle, null) },
+                        headlineContent = { Text("여러 개 선택하기") },
                     )
                 }
                 if (onDownload != null) {

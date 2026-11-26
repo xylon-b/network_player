@@ -122,9 +122,10 @@ class MainActivity : ComponentActivity() {
                             onOpenFolder = { push(Screen.Local(it)) },
                             onOpenImage = { images, index -> push(Screen.Photos(ServerConfig.LOCAL, images, index)) },
                             onOpenVideo = { videos, index, subs -> push(Screen.Player(ServerConfig.LOCAL, videos, index, subs)) },
-                            onPickMoveTarget = { entry, start ->
+                            onPickMoveTarget = { entries, start ->
                                 val memory = top.memory
-                                push(Screen.PickFolder("옮길 폴더 고르기", start, "여기로 옮기기") { memory.pendingMove = entry to it })
+                                val title = if (entries.size > 1) "${entries.size}개를 옮길 폴더 고르기" else "옮길 폴더 고르기"
+                                push(Screen.PickFolder(title, start, "여기로 옮기기") { memory.pendingMove = entries to it })
                             },
                         )
                         is Screen.PickFolder -> FolderPickerScreen(
