@@ -89,13 +89,37 @@ object SmbRepository {
 
     /** 연결 확인용. 실패하면 예외를 던진다. */
     suspend fun test(server: ServerConfig) = withContext(Dispatchers.IO) {
-        if (server.share.isBlank()) listSharesBlocking(server) else share(server).list("")
+        retryOnDrop { if (server.share.isBlank()) listSharesBlocking(server) else share(server).list("") }
         Unit
     }
 
     /** PC가 공유 중인 폴더 이름들. C$ 같은 관리용 숨김 공유는 뺀다. */
     suspend fun listShares(server: ServerConfig): List<String> = withContext(Dispatchers.IO) {
-        listSharesBlocking(server)
+        retryOnDrop { listSharesBlocking(server) }
+    }
+
+    /**
+     * 연결이 중간에 끊겼으면(Broken pipe, 소켓 끊김) 붙잡고 있던 연결을 버리고 한 번 더 시도한다.
+     * 테일스케일처럼 망이 바뀌거나 폰이 잠들었다 깨면, 죽은 연결을 계속 재사용해서
+     * '다시 시도'를 눌러도 같은 오류만 나던 문제를 막는다.
+     */
+    private fun <T> retryOnDrop(block: () -> T): T = try {
+        block()
+    } catch (e: Exception) {
+        if (!e.isConnectionDrop()) throw e
+        disconnect()
+        block()
+    }
+
+    private fun Throwable.isConnectionDrop(): Boolean {
+        var t: Throwable? = this
+        while (t != null) {
+            if (t is java.net.SocketException || t is java.io.EOFException ||
+                t is com.hierynomus.protocol.transport.TransportException
+            ) return true
+            t = t.cause
+        }
+        return false
     }
 
     @Synchronized
@@ -110,7 +134,7 @@ object SmbRepository {
     suspend fun list(server: ServerConfig, path: String): List<SmbEntry> = withContext(Dispatchers.IO) {
         val hiddenMask = FileAttributes.FILE_ATTRIBUTE_HIDDEN.value or FileAttributes.FILE_ATTRIBUTE_SYSTEM.value
         val dirMask = FileAttributes.FILE_ATTRIBUTE_DIRECTORY.value
-        share(server).list(path)
+        retryOnDrop { share(server).list(path) }
             .asSequence()
             .filter { it.fileName != "." && it.fileName != ".." }
             .filter { it.fileAttributes and hiddenMask == 0L }
@@ -228,6 +252,8 @@ private fun explain(msg: String): String = when {
     "STATUS_BAD_NETWORK_NAME" in msg -> "그 공유 이름을 찾을 수 없어요. 공유 이름을 비워두고 목록에서 골라보세요"
     "STATUS_OBJECT_NAME_COLLISION" in msg -> "같은 이름이 이미 있어요"
     "STATUS_SHARING_VIOLATION" in msg -> "PC에서 이 파일을 쓰고 있어서 바꿀 수 없어요"
+    "broken pipe" in msg.lowercase() || "connection reset" in msg.lowercase() ->
+        "PC가 연결을 끊었어요. 윈도우 사용자 이름과 비밀번호를 넣고 다시 해보세요 (요즘 윈도우는 비밀번호 없는 접속을 바로 끊어요)"
     "STATUS_ACCESS_DENIED" in msg -> "접근 권한이 없어요. 윈도우 공유 설정에서 이 계정을 허용해주세요"
     listOf("timed out", "timeout", "failed to connect", "unreachable", "refused", "no route").any { it in msg.lowercase() } ->
         "PC에 연결할 수 없어요. 주소가 맞는지, 같은 와이파이인지 확인해주세요. 테일스케일(100.x 주소)을 쓴다면 테일스케일 앱의 '앱 분할 터널링'에서 이 앱이 빠져 있지 않은지 봐주세요 ($msg)"
