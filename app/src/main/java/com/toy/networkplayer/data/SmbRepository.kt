@@ -40,6 +40,14 @@ object SmbRepository {
 
     private var live: Live? = null
 
+    /**
+     * 마지막 로그인 실패. 썸네일·목록 등 여러 곳이 동시에 연결을 요청하면 틀린 로그인이 순식간에
+     * 수십 번 쌓여 윈도우가 계정을 잠근다(STATUS_ACCOUNT_LOCKED_OUT). 실패 직후 잠시는 다시 로그인하지 않고
+     * 같은 오류를 돌려준다.
+     */
+    private var authFailure: Triple<ServerConfig, Long, Exception>? = null
+    private const val AUTH_RETRY_MS = 30_000L
+
     /** 공유 이름과 상관없이 같은 PC/계정이면 연결을 재사용한다. */
     private fun sessionKey(server: ServerConfig) = server.copy(id = "", name = "", share = "")
 
@@ -49,6 +57,9 @@ object SmbRepository {
             if (it.key == sessionKey(server) && it.connection.isConnected) return it.session
         }
         disconnect()
+        authFailure?.let { (key, at, error) ->
+            if (key == sessionKey(server) && System.currentTimeMillis() - at < AUTH_RETRY_MS) throw error
+        }
         // 사용자 이름을 비워두면 nPlayer처럼 손님(Guest) 로그인 → 익명 로그인 순서로 시도한다.
         // 윈도우는 Guest 계정이 꺼져 있는 경우가 많아서, Guest 하나만 시도하면 바로 실패했다.
         val auths = if (server.username.isBlank()) {
@@ -62,13 +73,15 @@ object SmbRepository {
             try {
                 val session = connection.authenticate(auth)
                 live = Live(sessionKey(server), connection, session)
+                authFailure = null
                 return session
             } catch (e: Exception) {
                 runCatching { connection.close(true) }
                 lastError = e
             }
         }
-        throw lastError!!
+        authFailure = Triple(sessionKey(server), System.currentTimeMillis(), lastError!!)
+        throw lastError
     }
 
     @Synchronized
@@ -247,6 +260,8 @@ fun Throwable.describe(): String {
 }
 
 private fun explain(msg: String): String = when {
+    "0xc0000234" in msg.lowercase() || "STATUS_ACCOUNT_LOCKED_OUT" in msg ->
+        "로그인 실패가 너무 많아서 윈도우가 계정을 잠깐 잠갔어요. 10분쯤 지나면 풀려요. 다른 앱(nPlayer 등)에 예전 비밀번호가 저장돼 있지 않은지도 확인해주세요"
     "STATUS_LOGON_FAILURE" in msg || "STATUS_ACCOUNT_DISABLED" in msg ->
         "로그인을 못 했어요. 윈도우 사용자 이름과 비밀번호를 넣어주세요 (비워두면 손님 로그인을 시도하는데, PC가 막아둔 경우가 많아요)"
     "STATUS_BAD_NETWORK_NAME" in msg -> "그 공유 이름을 찾을 수 없어요. 공유 이름을 비워두고 목록에서 골라보세요"
