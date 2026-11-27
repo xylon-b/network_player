@@ -49,15 +49,26 @@ object SmbRepository {
             if (it.key == sessionKey(server) && it.connection.isConnected) return it.session
         }
         disconnect()
-        val connection = client.connect(server.host, server.port)
-        val auth = if (server.username.isBlank()) {
-            AuthenticationContext.guest()
+        // 사용자 이름을 비워두면 nPlayer처럼 손님(Guest) 로그인 → 익명 로그인 순서로 시도한다.
+        // 윈도우는 Guest 계정이 꺼져 있는 경우가 많아서, Guest 하나만 시도하면 바로 실패했다.
+        val auths = if (server.username.isBlank()) {
+            listOf(AuthenticationContext.guest(), AuthenticationContext.anonymous())
         } else {
-            AuthenticationContext(server.username, server.password.toCharArray(), server.domain.ifBlank { null })
+            listOf(AuthenticationContext(server.username, server.password.toCharArray(), server.domain.ifBlank { null }))
         }
-        val session = connection.authenticate(auth)
-        live = Live(sessionKey(server), connection, session)
-        return session
+        var lastError: Exception? = null
+        for (auth in auths) {
+            val connection = client.connect(server.host, server.port)
+            try {
+                val session = connection.authenticate(auth)
+                live = Live(sessionKey(server), connection, session)
+                return session
+            } catch (e: Exception) {
+                runCatching { connection.close(true) }
+                lastError = e
+            }
+        }
+        throw lastError!!
     }
 
     @Synchronized
@@ -212,11 +223,13 @@ fun Throwable.describe(): String {
 }
 
 private fun explain(msg: String): String = when {
-    "STATUS_LOGON_FAILURE" in msg -> "사용자 이름이나 비밀번호가 맞지 않아요"
+    "STATUS_LOGON_FAILURE" in msg || "STATUS_ACCOUNT_DISABLED" in msg ->
+        "로그인을 못 했어요. 윈도우 사용자 이름과 비밀번호를 넣어주세요 (비워두면 손님 로그인을 시도하는데, PC가 막아둔 경우가 많아요)"
     "STATUS_BAD_NETWORK_NAME" in msg -> "그 공유 이름을 찾을 수 없어요. 공유 이름을 비워두고 목록에서 골라보세요"
     "STATUS_OBJECT_NAME_COLLISION" in msg -> "같은 이름이 이미 있어요"
     "STATUS_SHARING_VIOLATION" in msg -> "PC에서 이 파일을 쓰고 있어서 바꿀 수 없어요"
     "STATUS_ACCESS_DENIED" in msg -> "접근 권한이 없어요. 윈도우 공유 설정에서 이 계정을 허용해주세요"
-    "timed out" in msg.lowercase() || "timeout" in msg.lowercase() -> "PC에 연결할 수 없어요. 주소와 같은 와이파이인지 확인해주세요 ($msg)"
+    listOf("timed out", "timeout", "failed to connect", "unreachable", "refused", "no route").any { it in msg.lowercase() } ->
+        "PC에 연결할 수 없어요. 주소가 맞는지, 같은 와이파이인지 확인해주세요. 테일스케일(100.x 주소)을 쓴다면 테일스케일 앱의 '앱 분할 터널링'에서 이 앱이 빠져 있지 않은지 봐주세요 ($msg)"
     else -> msg
 }
